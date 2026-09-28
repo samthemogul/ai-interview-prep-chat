@@ -12,12 +12,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/mubbyCoders/ai-interview-prep-chat.git"
+    "url": "https://github.com/samthemogul/ai-interview-prep-chat.git"
   },
   "bugs": {
-    "url": "https://github.com/mubbyCoders/ai-interview-prep-chat/issues"
+    "url": "https://github.com/samthemogul/ai-interview-prep-chat/issues"
   },
-  "homepage": "https://github.com/mubbyCoders/ai-interview-prep-chat#readme",
+  "homepage": "https://github.com/samthemogul/ai-interview-prep-chat/#readme",
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=20"
