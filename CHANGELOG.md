@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.6] - 2026-09-28
+
+### Fixed
+
+- **Follow-up edits in the same chat now actually run (even on larger models).** The 0.2.5 change wasn't enough: whatever stands in for a past edit in the history — a status tag, or the plain "(I edited …)" note — gets copied by the model on the next turn, so it narrates an edit and emits no code. The history now rebuilds each past edit as a real fenced code block (reconstructed from the edit's diff), so the pattern the model learns from its own prior turns is "make a change = write a code block", not "describe a change". Verified with qwen2.5-coder:7b, where the note was being echoed verbatim.
+
 ## [0.2.5] - 2026-09-28
 
 ### Fixed

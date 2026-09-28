@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../ollama/OllamaClient';
+import { languageForPath } from '../context/fileFilters';
 import type { ChatMode, Chips, Mode, UiEdit, UiMessage } from './protocol';
 
 /** A conversation message as stored. Never contains repository context. */
@@ -147,27 +148,25 @@ export class ChatState {
 }
 
 /**
- * Replaces edit-card placeholders in an assistant turn with a short natural note, for the
- * model's history. This is deliberately NOT the structured "[Proposed edit … : accepted]"
- * form the UI uses: small models copy a machine-looking tag verbatim on the next turn
- * instead of writing new code, so past edits read as plain narration here. The current file
- * contents (sent fresh as context each turn) are what tell the model what actually changed.
+ * Rebuilds an assistant turn for the model's history, putting each edit back as a real
+ * code block.
+ *
+ * The edit's code is extracted from the visible text into a `%%EDIT:id%%` placeholder. If
+ * history showed only a note where the code had been ("I edited pyserver.py", or the old
+ * "[Proposed edit …]" tag), the turn read as "described an edit but gave no code" — and
+ * models (7B included) faithfully copy that shape on the next turn: they narrate an edit
+ * and never emit code. Reconstructing the code block from the edit's own diff keeps the
+ * learned pattern correct: making a change means writing a real code block in the edit
+ * format. Edits that changed nothing (rejected, reverted, failed) contribute no block.
  */
 export function describeEdits(text: string, edits: UiEdit[] | undefined): string {
   const out = text.replace(/^%%EDIT:([\w-]+)%%$/gm, (_m, id: string) => {
     const e = edits?.find((x) => x.id === id);
-    if (!e) return '';
-    switch (e.status) {
-      case 'accepted':
-        return `(I edited ${e.path}.)`;
-      case 'pending':
-        return `(I proposed a change to ${e.path}.)`;
-      case 'failed':
-        return `(My change to ${e.path} could not be applied.)`;
-      default:
-        // rejected, reverted, expired: nothing was kept, so say nothing.
-        return '';
-    }
+    if (!e || e.status === 'rejected' || e.status === 'reverted' || e.status === 'expired') return '';
+    const added = e.preview.filter((l) => l.t === '+').map((l) => l.s);
+    if (!added.length) return e.status === 'failed' ? '' : `${e.path}`;
+    const lang = languageForPath(e.path);
+    return `${e.path}\n\`\`\`${lang}\n${added.join('\n')}\n\`\`\``;
   });
   // Collapse blank lines left where placeholders were removed.
   return out.replace(/\n{3,}/g, '\n\n').trim();
