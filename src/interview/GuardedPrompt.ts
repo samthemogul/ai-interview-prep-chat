@@ -28,11 +28,11 @@ const CHANGED_CODE_ONLY = `When you show code for a change, show only the new or
 
 const EXACTLY_WHAT_WAS_ASKED = `Do exactly what was asked and nothing more: no tests, usage examples, curl commands, extra endpoints, refactors or long explanations unless the user asks for them.`;
 
-const BE_BRIEF = `Be brief, like a senior engineer answering in chat:
-- At most 3 short sentences of prose (or up to 5 short bullets when listing things). Hints are one sentence.
-- No headings, no "Explanation", "How it works", "Summary" or "Testing" sections, no restating the question, no closing offers such as "Let me know if…".
+const BE_BRIEF = `Keep the words around your code very short, like a senior engineer answering in chat. The code (and file edits) can be as long as needed, but the prose must be tiny:
+- One or two short sentences of prose total (a hint is one sentence). Prefer to let the code speak for itself.
+- Do not write "Explanation", "How it works", "Summary", "Testing" or "Usage" sections, do not restate the question, and do not end with offers such as "Let me know if…".
 - Do not add comments or docstrings to code unless asked.
-Only go longer when the user asks for detail.`;
+Only write more prose when the user explicitly asks for detail.`;
 
 const EDIT_FORMAT = `How to change files (Agent mode):
 Write the file path on its own line, then a code block with ONLY the new or changed code:

@@ -41,7 +41,7 @@ import {
   looksLikeTestCode,
   turnReminder,
 } from '../interview/RequestClassifier';
-import { PROSE_BUDGET, ProseLimiter, wantsDetail } from '../interview/Brevity';
+import { ProseLimiter, wantsDetail } from '../interview/Brevity';
 import { shortenRefusal } from '../interview/Refusal';
 import { requiresConfirmation, otherMode, MODE_LABELS } from '../interview/InterviewMode';
 import type { TranscriptSession } from '../interview/Transcript';
@@ -509,14 +509,12 @@ export class ChatController {
     let doneReason: string | undefined;
     // Guarded refusals are buffered and reduced to "refusal + one hint" before display.
     let refusalBuffer = '';
-    // Explanations stay short: prose beyond the mode's budget, filler and "Explanation"
-    // sections are dropped (code and edit cards always pass).
-    const limiter = refusal
-      ? undefined
-      : new ProseLimiter({
-          chatMode,
-          budget: wantsDetail(classification.text) ? undefined : PROSE_BUDGET[chatMode],
-        });
+    // The prompt asks the model for short answers. As a light cleanup for display only, we
+    // strip trailing filler ("Let me know if…") and whole "Explanation"/"Summary"/"Testing"
+    // sections — never the model's actual answer, never code, never edit cards. We do NOT
+    // truncate by sentence count and we never stop generation early, so nothing the model
+    // still has to say (including a code block that comes after prose) is ever cut off.
+    const limiter = refusal || wantsDetail(classification.text) ? undefined : new ProseLimiter({ chatMode });
     const show = (text: string) => {
       if (!text) return;
       if (refusal) refusalBuffer += text;
@@ -524,15 +522,6 @@ export class ChatController {
         const visible = limiter ? limiter.push(text) : text;
         if (visible) this.appendText(assistant.id, visible);
       }
-    };
-    // Everything still to come would be hidden, so stop generating (saves local-model time).
-    // Only once the model is rambling after its code, never before a code block that may follow.
-    const canStopEarly = () => {
-      if (!limiter || limiter.insideCode) return false;
-      if (chatMode === 'agent') {
-        return !!extractor && extractor.idle && extractor.editCount > 0 && limiter.suppressedSinceCode >= 3;
-      }
-      return limiter.exhausted && limiter.suppressedSinceCode >= 5;
     };
     const emit = (raw: string) => {
       const text = extractor ? extractor.push(raw) : raw;
@@ -670,11 +659,6 @@ export class ChatController {
         signal,
       )) {
         emit(delta);
-        if (canStopEarly()) {
-          this.deps.logger.debug('Stopping early: the rest of the answer would be trimmed.');
-          doneReason = 'trimmed';
-          break;
-        }
       }
       finishStream();
       this.deps.logger.debug(`Generation finished: ${doneReason ?? 'unknown'}`);
