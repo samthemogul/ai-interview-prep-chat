@@ -292,3 +292,16 @@ describe('output guard', () => {
     });
   });
 });
+
+describe('guarded approach note is firm, not hedged', () => {
+  it('tells the model to implement, not to ask the candidate to rephrase', () => {
+    const c = classifyRequest(
+      'create a get user endpoint that takes in the id, fetches the user from the database, returns it if found and returns a 404 error if not found',
+    );
+    expect(c.describesApproach).toBe(true);
+    const note = turnReminder(c, 'agent')!;
+    expect(note).toContain('HAS described an approach');
+    expect(note).toContain('Do NOT refuse');
+    expect(note).not.toContain('may be describing');
+  });
+});

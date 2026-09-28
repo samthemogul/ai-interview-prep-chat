@@ -2,7 +2,7 @@
   "name": "ai-interview-prep-chat",
   "displayName": "AIInterviewPrepChat",
   "description": "Practise AI-assisted coding interviews in VS Code with a local AI powered by Ollama: guarded or unguarded, with Ask, Plan and Agent modes. Your code never leaves your machine.",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "publisher": "samthemogul",
   "license": "MIT",
   "icon": "media/icon.png",

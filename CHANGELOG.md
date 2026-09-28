@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.8] - 2026-09-28
+
+### Fixed
+
+- **Edits you asked for are no longer silently dropped.** The "only-affected-parts" logic used to skip any function the model rewrote unless your request named it, so a genuine change (e.g. modifying `create_user` to associate a school) could vanish with a "Left … as it was" note. It now applies every function the model genuinely rewrote, and only flags an incidental one with "Also updated …" so you can catch it in the diff. Setup/assignment rewrites from whole-file echoes (like an import-style change to a `client = …` line) are still skipped unless named.
+- **Guarded mode stops refusing an approach it already recognised.** When the classifier detects a step-by-step approach, the per-turn instruction now firmly tells the model to implement it and not to refuse or ask the candidate to rephrase — so the same detailed request no longer gets declined two or three times before it works.
+
+### Changed
+
+- **Agent mode sends only the last exchange as history.** The file is re-sent fresh each turn, and a long back-history of prior turns is what a weak model starts echoing instead of editing. Trimming it reduces the "narrates instead of editing" drift on later turns.
+
 ## [0.2.7] - 2026-09-28
 
 ### Fixed

@@ -324,7 +324,7 @@ describe('ChatController: Guarded Interview Mode', () => {
     expect(answer.text).not.toContain(APPROACH_MARKER);
     expect(answer.approach).toBe(true);
     expect(
-      ollama.chatRequests[0]!.messages.some((m) => m.content.includes('may be describing an approach')),
+      ollama.chatRequests[0]!.messages.some((m) => m.content.includes('HAS described an approach')),
     ).toBe(true);
     const turn = host.latestTranscript()!.events[0]!;
     expect(turn.type === 'turn' && turn.flags).toContain('approach-implemented');
@@ -866,6 +866,21 @@ describe('Agent mode: small-model output (0.2.1)', () => {
     const user = ollama.chatRequests[0]!.messages.at(-1)!.content;
     expect(user).toContain('def serialize(mongo_result):');
     expect(user).not.toMatch(/^\s*\d+ \| /m);
+  });
+
+  it('caps Agent-mode history to the last exchange to reduce drift', async () => {
+    const { controller, ollama } = setupModes(() => ['ok'], { mode: 'normal', chatMode: 'agent' });
+    await controller.refreshOllama();
+    for (const t of ['first request', 'second request', 'third request', 'fourth request']) {
+      await controller.send(t, NO_CHIPS);
+    }
+    // The last call's payload should carry at most the previous exchange, not the whole chat.
+    const lastReq = ollama.chatRequests.at(-1)!;
+    const priorTurns = lastReq.messages.filter((m) => m.role !== 'system').slice(0, -1);
+    expect(priorTurns.length).toBeLessThanOrEqual(2);
+    const joined = priorTurns.map((m) => m.content).join('\n');
+    expect(joined).not.toContain('first request');
+    expect(joined).not.toContain('second request');
   });
 
   it('a later turn edit stays pending and opens its own diff after the first is accepted', async () => {
