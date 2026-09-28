@@ -96,6 +96,62 @@ describe('chat history', () => {
     ]);
   });
 
+  it('describes past edits to the model as plain narration, never the UI status tag', () => {
+    const s = new ChatState('c2');
+    s.add({
+      id: '1',
+      role: 'user',
+      text: 'add a delete endpoint',
+      mode: 'normal',
+      status: 'done',
+      sources: [],
+      notes: [],
+      createdAt: '',
+    });
+    s.add({
+      id: '2',
+      role: 'assistant',
+      text: 'Adding it.\n%%EDIT:e1%%\nDone.',
+      mode: 'normal',
+      status: 'done',
+      sources: [],
+      notes: [],
+      createdAt: '',
+      edits: [
+        {
+          id: 'e1',
+          path: 'pyserver.py',
+          status: 'accepted',
+          isNew: false,
+          inferredPath: true,
+          added: 6,
+          removed: 0,
+          preview: [],
+          diffOpened: true,
+        },
+      ],
+    });
+    s.add({
+      id: '3',
+      role: 'user',
+      text: 'now add an update endpoint',
+      mode: 'normal',
+      status: 'done',
+      sources: [],
+      notes: [],
+      createdAt: '',
+    });
+    const hist = s.historyForModel('3');
+    const assistant = hist.find((m) => m.role === 'assistant')!.content;
+    // The model must not be handed a machine-looking edit tag it will copy verbatim.
+    expect(assistant).not.toContain('[Proposed edit');
+    expect(assistant).not.toContain('+6');
+    expect(assistant).not.toContain(': accepted');
+    expect(assistant).not.toContain('%%EDIT');
+    expect(assistant).toContain('(I edited pyserver.py.)');
+    expect(assistant).toContain('Adding it.');
+  });
+
   it('restores persisted conversations and marks interrupted answers as stopped', () => {
     const restored = ChatState.restore(
       {

@@ -146,12 +146,29 @@ export class ChatState {
   }
 }
 
-/** Replaces edit-card placeholders with a short description the model can understand. */
+/**
+ * Replaces edit-card placeholders in an assistant turn with a short natural note, for the
+ * model's history. This is deliberately NOT the structured "[Proposed edit … : accepted]"
+ * form the UI uses: small models copy a machine-looking tag verbatim on the next turn
+ * instead of writing new code, so past edits read as plain narration here. The current file
+ * contents (sent fresh as context each turn) are what tell the model what actually changed.
+ */
 export function describeEdits(text: string, edits: UiEdit[] | undefined): string {
-  return text.replace(/^%%EDIT:([\w-]+)%%$/gm, (_m, id: string) => {
+  const out = text.replace(/^%%EDIT:([\w-]+)%%$/gm, (_m, id: string) => {
     const e = edits?.find((x) => x.id === id);
     if (!e) return '';
-    const status = e.status === 'failed' ? `failed: ${e.error ?? 'could not be applied'}` : e.status;
-    return `[Proposed edit to ${e.path} (+${e.added} −${e.removed}): ${status}]`;
+    switch (e.status) {
+      case 'accepted':
+        return `(I edited ${e.path}.)`;
+      case 'pending':
+        return `(I proposed a change to ${e.path}.)`;
+      case 'failed':
+        return `(My change to ${e.path} could not be applied.)`;
+      default:
+        // rejected, reverted, expired: nothing was kept, so say nothing.
+        return '';
+    }
   });
+  // Collapse blank lines left where placeholders were removed.
+  return out.replace(/\n{3,}/g, '\n\n').trim();
 }
