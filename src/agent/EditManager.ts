@@ -73,6 +73,12 @@ export function isEditablePath(relPath: string): boolean {
   return !isInIgnoredDir(relPath) && !isBinaryPath(relPath);
 }
 
+/** Compares file text ignoring end-of-line style and a single trailing newline. */
+function sameText(a: string, b: string): boolean {
+  const norm = (t: string) => t.replace(/\r\n/g, '\n').replace(/\n+$/, '\n');
+  return norm(a) === norm(b);
+}
+
 /**
  * Tracks proposed edits. Nothing is written until the user accepts; a proposal is
  * re-applied against the file's current content at accept time, so edits made in the
@@ -229,6 +235,15 @@ export class EditManager {
       content = again.content;
     }
     await this.host.writeFile(e.path, content);
+    // Confirm the change actually landed. A silent no-op here (a read-only file, a path that
+    // resolved to a different copy than the one on screen, an editor that rejected the edit)
+    // otherwise shows as "Applied" while nothing changed, which is worse than an error.
+    const after = await this.host.readFile(e.path);
+    if (after !== undefined && !sameText(after, content)) {
+      e.status = 'failed';
+      e.error = `\`${e.path}\` didn't change on disk. It may be read-only, open elsewhere, or a different copy than the one you're viewing.`;
+      return this.info(e);
+    }
     e.applied = content;
     e.status = 'accepted';
     await this.host.closeDiff?.(e.id);

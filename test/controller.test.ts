@@ -863,6 +863,35 @@ describe('Agent mode: small-model output (0.2.1)', () => {
     expect(user).not.toMatch(/^\s*\d+ \| /m);
   });
 
+  it('a later turn edit stays pending and opens its own diff after the first is accepted', async () => {
+    const replyA = [
+      'Adding it.\n\npyserver.py\n```python\n<<<<<<< SEARCH\napp = FastAPI()\n=======\napp = FastAPI(title="A")\n>>>>>>> REPLACE\n```\n',
+    ];
+    const replyB = [
+      'Now this.\n\npyserver.py\n```python\n<<<<<<< SEARCH\ndb = client["uhl"]\n=======\ndb = client["users_db"]\n>>>>>>> REPLACE\n```\n',
+    ];
+    let turn = 0;
+    const { host, controller, editHost } = setupModes(() => (turn++ === 0 ? replyA : replyB), {
+      mode: 'normal',
+      chatMode: 'agent',
+    });
+    await controller.refreshOllama();
+    await controller.send('set the app title', NO_CHIPS);
+    const m1 = host.lastState()!.messages[1]!;
+    const e1 = m1.edits!.find((e) => !e.hidden)!;
+    expect(e1.status).toBe('pending');
+    expect(editHost.diffs).toEqual([e1.id]);
+    await controller.editAction(m1.id, e1.id, 'accept');
+    expect(host.lastState()!.messages[1]!.edits!.find((e) => e.id === e1.id)!.status).toBe('accepted');
+
+    await controller.send('rename the db', NO_CHIPS);
+    const m2 = host.lastState()!.messages[3]!;
+    const e2 = m2.edits!.find((e) => !e.hidden)!;
+    expect(e2.id).not.toBe(e1.id);
+    expect(e2.status).toBe('pending');
+    expect(editHost.diffs).toEqual([e1.id, e2.id]);
+  });
+
   it('only auto-opens the first edit of an answer', async () => {
     const two = [
       ...EDIT_REPLY,
