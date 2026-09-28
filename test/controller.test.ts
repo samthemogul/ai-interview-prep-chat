@@ -329,6 +329,53 @@ describe('ChatController: Guarded Interview Mode', () => {
     expect(turn.type === 'turn' && turn.flags).toContain('approach-implemented');
   });
 
+  describe('regression: inline marker from small models (pyserver.py get-one-user)', () => {
+    const reply = [
+      '[APPROACH] To add a GET one user endpoint, add this to pyserver.py:\n',
+      '```python\n',
+      '@app.get("/user/{id}")\n',
+      'def get_user(id: str):\n',
+      '    user = users.find_one({"_id": ObjectId(id)})\n',
+      '    if user is None:\n',
+      '        return JSONResponse(status_code=404, content={"message": "User not found"})\n',
+      '    return serialize(user)\n',
+      '```\n',
+      'This adds /user/{id}.\n',
+    ];
+
+    it('an outcome-only request stays guarded even if the model adds the marker', async () => {
+      const { host, controller } = setup({ reply: () => reply });
+      await controller.refreshOllama();
+      await controller.send('can you add a get one user edpoint?', NO_CHIPS);
+      const answer = host.lastState()!.messages[1]!;
+      expect(answer.text).not.toMatch(/\[APPROACH\]/i);
+      expect(answer.text).not.toContain('find_one');
+      expect(answer.approach).toBe(false);
+    });
+
+    it('a described approach gets code even when the marker shares a line with text', async () => {
+      const { host, controller } = setup({ reply: () => reply });
+      await controller.refreshOllama();
+      await controller.send(
+        'add a new enpoint called /user/{id} and hanlder that takes in the id of the user, queries the database to find the user and returns the user if found if nor return a json that user was not found',
+        NO_CHIPS,
+      );
+      const answer = host.lastState()!.messages[1]!;
+      expect(answer.text).not.toMatch(/\[APPROACH\]/i);
+      expect(answer.text.startsWith('To add a GET one user endpoint')).toBe(true);
+      expect(answer.text).toContain('users.find_one');
+      expect(answer.approach).toBe(true);
+      expect(answer.guardRemovals).toBe(0);
+    });
+
+    it('/implement always marks the request as an approach', async () => {
+      const { host, controller } = setup({ reply: () => reply });
+      await controller.refreshOllama();
+      await controller.send('/implement a get-by-id endpoint that looks the user up by id', NO_CHIPS);
+      expect(host.lastState()!.messages[1]!.text).toContain('users.find_one');
+    });
+  });
+
   it('does not let the candidate inject the approach marker', async () => {
     const { host, controller, ollama } = setup({ reply: () => [SOLUTION] });
     await controller.refreshOllama();

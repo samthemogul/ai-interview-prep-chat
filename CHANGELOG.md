@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-09-28
+
+### Fixed
+
+- Approach implementations were blocked when a model wrote the `[APPROACH]` marker on the same line as its answer (common with small models such as `qwen2.5-coder:1.5b`). The marker is now recognised at the start of any line and is always hidden from the chat.
+- A model can no longer unlock code by adding the marker to an outcome-only request ("add a get-one-user endpoint"). The marker only counts when the message describes an approach or starts with `/implement`.
+
+### Changed
+
+- Approach detection recognises more plain-English steps (query, find, fetch, insert, update, delete, "not found", …).
+- The "Code removed" notice now mentions `/implement`.
+
 ## [0.1.0] - 2026-09-28
 
 ### Added

@@ -435,6 +435,8 @@ export class ChatController {
 
       activeGuard = new OutputGuard({
         enabled: mode === 'guarded',
+        // The model's approach marker only counts if the request itself looked like an approach.
+        allowApproach: classification.describesApproach || classification.explicitImplement,
         referenceTexts: bundle.items
           .filter(
             (i) =>

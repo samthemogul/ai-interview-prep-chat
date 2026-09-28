@@ -77,6 +77,7 @@ describe('solution-request detection', () => {
     'implement a function that iterates through the list of prices, adds them together and returns the sum',
     'in ConnectionPool.query wrap the execute call in try/finally and call release in the finally block',
     'loop over the users, store each id in a hash set and return true if we see a duplicate',
+    'add a new enpoint called /user/{id} and hanlder that takes in the id of the user, queries the database to find the user and returns the user if found if nor return a json that user was not found',
   ])('recognises the plain-language approach "%s"', (text) => {
     const c = classifyRequest(text);
     expect(c.describesApproach).toBe(true);
@@ -241,6 +242,26 @@ describe('output guard', () => {
       const g = guarded();
       streamThrough(`**${APPROACH_MARKER}**\n` + impl.split('\n').slice(1).join('\n'), g);
       expect(g.report.approach).toBe(true);
+    });
+
+    it('accepts the marker at the start of a line of text, and strips it', () => {
+      const g = guarded();
+      const text = impl.replace(
+        `${APPROACH_MARKER}\nHere is your approach:`,
+        `${APPROACH_MARKER} Here is your approach:`,
+      );
+      const { shown } = streamThrough(text, g);
+      expect(shown.startsWith('Here is your approach:')).toBe(true);
+      expect(shown).toContain('total += price;');
+      expect(g.report.approach).toBe(true);
+    });
+
+    it('ignores the marker when the request did not look like an approach', () => {
+      const g = new OutputGuard({ enabled: true, allowApproach: false });
+      const { shown } = streamThrough(impl, g);
+      expect(shown).not.toContain(APPROACH_MARKER);
+      expect(shown).not.toContain('total += price;');
+      expect(g.report.approach).toBe(false);
     });
 
     it('ignores a marker that is not at the start', () => {

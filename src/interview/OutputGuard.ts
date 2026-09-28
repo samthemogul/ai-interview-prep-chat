@@ -1,9 +1,4 @@
-import {
-  APPROACH_LINE_CAP,
-  APPROACH_MARKER,
-  GUARDED_EXAMPLE_BLOCK_CAP,
-  GUARDED_EXAMPLE_LINE_CAP,
-} from './GuardedPrompt';
+import { APPROACH_LINE_CAP, GUARDED_EXAMPLE_BLOCK_CAP, GUARDED_EXAMPLE_LINE_CAP } from './GuardedPrompt';
 
 export type RemovalReason = 'too-long' | 'too-many-blocks' | 'rewrite' | 'diff' | 'approach-limit';
 
@@ -19,10 +14,16 @@ export interface OutputGuardOptions {
   enabled: boolean;
   /** The candidate's own code (selection, open file, referenced files) for rewrite detection. */
   referenceTexts?: string[];
+  /**
+   * Whether the request looked like an approach to the extension (or used /implement).
+   * The model's marker only unlocks code when this is true, so a small model that adds the
+   * marker to every answer can't unlock solutions for outcome-only requests. Default true.
+   */
+  allowApproach?: boolean;
 }
 
 const NOTICES: Record<RemovalReason, string> = {
-  'too-long': `Code removed: Guarded Interview Mode only allows short generic examples (up to ${GUARDED_EXAMPLE_LINE_CAP} lines). Describe your approach if you want code for it.`,
+  'too-long': `Code removed: Guarded Interview Mode only allows short generic examples (up to ${GUARDED_EXAMPLE_LINE_CAP} lines). Describe how to do it (steps, data structures, control flow), or start your message with /implement, to get code for your approach.`,
   'too-many-blocks': 'Code removed: Guarded Interview Mode allows one short example per answer.',
   rewrite:
     "Code removed: Guarded Interview Mode doesn't rewrite your code. Describe the change you want to make and the AI can implement your approach.",
@@ -31,7 +32,10 @@ const NOTICES: Record<RemovalReason, string> = {
 };
 
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})\s*([^`\s]*)[^`]*$/;
-const MARKER_NORMALIZED = APPROACH_MARKER.toLowerCase();
+/** The marker at the start of a line, optionally wrapped in Markdown emphasis and followed by text. */
+const LEADING_MARKER = /^\s*[*_`]{0,3}\[\s*approach\s*\][*_`]{0,3}\s*[:\-\u2013\u2014]?\s*/i;
+/** The marker anywhere in a line. */
+const ANY_MARKER = /[*_`]{0,3}\[\s*approach\s*\][*_`]{0,3}[ \t]*/gi;
 
 /**
  * Enforces Guarded Interview Mode limits on streamed model output (spec 10A).
@@ -133,12 +137,17 @@ export class OutputGuard {
       return '';
     }
 
-    const trimmed = line.trim();
-    if (isMarkerLine(trimmed)) {
-      // Only a marker at the very start of the response counts; stray markers are dropped.
-      if (!this.sawContent) this.approach = true;
-      return '';
+    // Small models often write "[APPROACH] Here is…" on one line instead of a line of its own.
+    const marker = LEADING_MARKER.exec(line);
+    if (marker) {
+      // Only a marker at the very start of the response counts, and only when the request
+      // looked like an approach. Stray or unearned markers are simply removed.
+      if (!this.sawContent && this.opts.allowApproach !== false) this.approach = true;
+      line = line.slice(marker[0].length);
+      alreadyReleased = 0;
+      if (!line.trim()) return '';
     }
+    const trimmed = line.trim();
 
     const open = FENCE_OPEN.exec(line);
     if (open) {
@@ -154,7 +163,7 @@ export class OutputGuard {
     }
 
     if (trimmed) this.sawContent = true;
-    return line.slice(alreadyReleased) + nl;
+    return line.slice(alreadyReleased).replace(ANY_MARKER, '') + nl;
   }
 
   private isClosingFence(line: string): boolean {
@@ -208,11 +217,6 @@ export class OutputGuard {
     }
     return false;
   }
-}
-
-function isMarkerLine(trimmed: string): boolean {
-  const t = trimmed.replace(/[*_`]/g, '').trim().toLowerCase();
-  return t === MARKER_NORMALIZED;
 }
 
 /** Detects unified-diff style output: hunk headers or mostly +/- prefixed lines. */
