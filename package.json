@@ -2,7 +2,7 @@
   "name": "ai-interview-prep-chat",
   "displayName": "AIInterviewPrepChat",
   "description": "Practise AI-assisted coding interviews in VS Code with a local AI powered by Ollama: guarded or unguarded, with Ask, Plan and Agent modes. Your code never leaves your machine.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "samthemogul",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -137,6 +137,18 @@
         "icon": "$(tools)"
       },
       {
+        "command": "aiInterviewPrepChat.acceptEdit",
+        "title": "Accept Proposed Edit",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(check)"
+      },
+      {
+        "command": "aiInterviewPrepChat.rejectEdit",
+        "title": "Reject Proposed Edit",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(close)"
+      },
+      {
         "command": "aiInterviewPrepChat.selectModel",
         "title": "Select Model",
         "category": "AIInterviewPrepChat"
@@ -261,6 +273,26 @@
         {
           "command": "aiInterviewPrepChat.askGuidingQuestions",
           "when": "config.aiInterviewPrepChat.mode != 'normal'"
+        },
+        {
+          "command": "aiInterviewPrepChat.acceptEdit",
+          "when": "false"
+        },
+        {
+          "command": "aiInterviewPrepChat.rejectEdit",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "aiInterviewPrepChat.acceptEdit",
+          "when": "resourceScheme == aiInterviewPrepChat-proposed",
+          "group": "navigation@1"
+        },
+        {
+          "command": "aiInterviewPrepChat.rejectEdit",
+          "when": "resourceScheme == aiInterviewPrepChat-proposed",
+          "group": "navigation@2"
         }
       ]
     },

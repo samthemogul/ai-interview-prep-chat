@@ -1,6 +1,8 @@
 import type { RawEdit } from './EditBlocks';
 import type { PreviewLine } from './applyEdit';
+import type { ApplyResult } from './applyEdit';
 import { applySearchReplace, summarizeEdit } from './applyEdit';
+import { applyBlock, pathFromCodeComment, stripLineNumberPrefixes } from './placeBlock';
 import { resolveFileReference, toSafeRelativePath } from '../context/References';
 import { isBinaryPath, isInIgnoredDir } from '../context/fileFilters';
 
@@ -19,6 +21,15 @@ export interface EditInfo {
   preview: PreviewLine[];
   diffOpened: boolean;
   error?: string;
+  /** True for code blocks that turned out to change nothing; the UI doesn't show them. */
+  hidden?: boolean;
+}
+
+/** Applies either a SEARCH/REPLACE edit or a plain code block to a file's content. */
+export function applyRawEdit(original: string | undefined, raw: RawEdit): ApplyResult {
+  if (raw.code !== undefined) return applyBlock(original, raw.code);
+  const strip = (t: string) => stripLineNumberPrefixes(t.split('\n')).join('\n');
+  return applySearchReplace(original, strip(raw.search), strip(raw.replace));
 }
 
 /** File access the manager needs. Implemented with the VS Code API in the extension. */
@@ -35,6 +46,8 @@ export interface EditHost {
     proposed: string;
     isNew: boolean;
   }): Promise<void>;
+  /** Closes the diff view for an edit, if it is open. */
+  closeDiff?(id: string): Promise<void>;
   /** Indexed workspace files, used to resolve short paths like "pyserver.py". */
   listFiles(): Promise<string[]>;
 }
@@ -43,6 +56,7 @@ interface ManagedEdit extends EditInfo {
   messageId: string;
   search: string;
   replace: string;
+  raw: RawEdit;
   original?: string;
   proposed?: string;
   applied?: string;
@@ -73,6 +87,10 @@ export class EditManager {
     return e ? this.info(e) : undefined;
   }
 
+  messageIdOf(id: string): string | undefined {
+    return this.edits.get(id)?.messageId;
+  }
+
   forMessage(messageId: string): EditInfo[] {
     return [...this.edits.values()].filter((e) => e.messageId === messageId).map((e) => this.info(e));
   }
@@ -93,6 +111,7 @@ export class EditManager {
       error: reason,
       search: '',
       replace: '',
+      raw,
     };
     this.edits.set(e.id, e);
     return this.info(e);
@@ -117,6 +136,7 @@ export class EditManager {
       diffOpened: false,
       search: raw.search,
       replace: raw.replace,
+      raw,
     };
     this.edits.set(id, base);
     const fail = (error: string) => {
@@ -126,7 +146,11 @@ export class EditManager {
     };
 
     if (raw.incomplete) return fail('The response ended before this edit was complete.');
-    const requested = raw.path ?? fallbackPath;
+    // A code block can name its file in a first-line comment, e.g. "# pyserver.py:78-84".
+    const firstCodeLine = raw.code?.split('\n').find((l) => l.trim());
+    const commentPath = firstCodeLine ? pathFromCodeComment(firstCodeLine) : undefined;
+    const requested = commentPath ?? raw.path ?? fallbackPath;
+    if (!raw.path && commentPath) base.inferredPath = false;
     if (!requested) return fail("The model didn't say which file to change.");
     const safe = toSafeRelativePath(requested);
     if (!safe) return fail(`\`${requested}\` is outside the workspace.`);
@@ -138,8 +162,17 @@ export class EditManager {
     if (!isEditablePath(path)) return fail(`\`${path}\` is in a folder or file type the agent may not edit.`);
 
     const original = await this.host.readFile(path);
-    const result = applySearchReplace(original, raw.search, raw.replace);
-    if (!result.ok) return fail(result.reason);
+    if (original === undefined && raw.code !== undefined && !commentPath && !raw.path) {
+      return fail("The model didn't say which file this code belongs in.");
+    }
+    const result = applyRawEdit(original, raw);
+    if (!result.ok) {
+      if (result.reason.startsWith('NOOP')) {
+        base.hidden = true;
+        return fail('This code is already in the file.');
+      }
+      return fail(result.reason);
+    }
 
     const summary = summarizeEdit(result.searchLines, result.replaceLines);
     base.isNew = original === undefined;
@@ -181,7 +214,7 @@ export class EditManager {
       }
     } else if (current !== e.original) {
       // The file changed since the proposal: re-apply against what's there now.
-      const again = applySearchReplace(current, e.search, e.replace);
+      const again = applyRawEdit(current, e.raw);
       if (!again.ok) {
         e.status = 'failed';
         e.error = 'The file changed since this edit was proposed and it no longer applies.';
@@ -193,6 +226,7 @@ export class EditManager {
     await this.host.writeFile(e.path, content);
     e.applied = content;
     e.status = 'accepted';
+    await this.host.closeDiff?.(e.id);
     return this.info(e);
   }
 
@@ -208,7 +242,10 @@ export class EditManager {
   reject(id: string): EditInfo | undefined {
     const e = this.edits.get(id);
     if (!e) return undefined;
-    if (e.status === 'pending') e.status = 'rejected';
+    if (e.status === 'pending') {
+      e.status = 'rejected';
+      void this.host.closeDiff?.(e.id);
+    }
     return this.info(e);
   }
 
@@ -245,6 +282,7 @@ export class EditManager {
       preview: e.preview,
       diffOpened: e.diffOpened,
       error: e.error,
+      hidden: e.hidden || undefined,
     };
   }
 }

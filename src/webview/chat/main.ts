@@ -402,6 +402,8 @@ const EDIT_STATUS: Record<UiEdit['status'], { label: string; icon: string; cls: 
 
 function renderEditCard(m: UiMessage, editId: string): string {
   const e = m.edits?.find((x) => x.id === editId);
+  // Code the model repeated without changing anything isn't worth a card.
+  if (e?.hidden) return '';
   if (!e) {
     return `<div class="edit-card preparing">${icon('loading', 'codicon-modifier-spin')}<span>Preparing edit…</span></div>`;
   }

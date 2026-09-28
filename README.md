@@ -61,13 +61,16 @@ They mirror the two setups used by AI-assisted assessment platforms: **guarded**
 
 ### Agent edits
 
-In Agent mode the model proposes each change as a small search-and-replace edit. The extension checks it against the real file and shows an **edit card**:
+In Agent mode the model proposes changes, either as a code block with the new or changed function, or as a search-and-replace edit. The extension works out where the code belongs (replacing the function it redefines, or inserting new code next to similar code), checks it against the real file, opens the diff, and shows an **edit card**:
 
-- a preview of the added and removed lines, with **Review diff** to open VS Code's side-by-side diff
+- the first change opens in VS Code's side-by-side diff straight away, with **Accept** and **Reject** in the diff editor's title bar
+- a preview of the added and removed lines, with **Review diff** to reopen the diff
 - **Accept** writes the change (through VS Code, so **Undo** works) and saves the file; **Reject** discards it; **Revert** puts the file back afterwards
 - nothing is written until you accept. If the file changed in the meantime, the edit is re-applied to the current content, or refused if it no longer fits
 - edits can't touch files outside the workspace, `.git`, dependency or build folders, or binaries
 - the AI can't run commands or tests; it tells you what to run
+- you get what you asked for: test code is left out unless you ask for tests, and code the model merely repeats isn't shown as a change
+- a partial snippet can never overwrite a whole function or class
 
 In Unguarded Plan mode, **Implement with Agent** under a plan switches to Agent mode and implements it.
 

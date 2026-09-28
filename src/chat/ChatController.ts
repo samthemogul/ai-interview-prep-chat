@@ -32,7 +32,15 @@ import type { DiagnosticEntry } from '../context/DiagnosticsContext';
 import { parseReferences } from '../context/References';
 import type { GuardReport } from '../interview/OutputGuard';
 import { OutputGuard, stripLineNumbers } from '../interview/OutputGuard';
-import { classifyRequest, isRefusalTurn, turnReminder } from '../interview/RequestClassifier';
+import {
+  asksForTests,
+  classifyRequest,
+  isChangeRequest,
+  isRefusalTurn,
+  looksLikeTestCode,
+  turnReminder,
+} from '../interview/RequestClassifier';
+import { shortenRefusal } from '../interview/Refusal';
 import { requiresConfirmation, otherMode, MODE_LABELS } from '../interview/InterviewMode';
 import type { TranscriptSession } from '../interview/Transcript';
 import { deriveFlags, newSession } from '../interview/Transcript';
@@ -80,6 +88,8 @@ export interface ChatControllerDeps {
   edits?: EditHost;
 }
 
+const DROPPED_TESTS_NOTE = "Left out test code you didn't ask for. Ask for tests if you want them.";
+
 const NO_EDIT_HOST: EditHost = {
   readFile: async () => {
     throw new Error('File editing is not available.');
@@ -111,6 +121,8 @@ export class ChatController {
   private mode: Mode;
   private chatMode: ChatMode;
   private readonly editManager: EditManager;
+  /** Messages whose first proposed edit has already been opened as a diff. */
+  private readonly autoOpened = new Set<string>();
   private chips: Chips = { currentFile: false, selection: false, diagnostics: false };
   private transcript: TranscriptSession | undefined;
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -437,31 +449,80 @@ export class ChatController {
     // Agent mode: edit blocks are pulled out of the stream and proposed as reviewable edits.
     const queued: Array<{ id: string; raw: RawEdit }> = [];
     const proposals: Array<Promise<void>> = [];
+    const refusal = mode === 'guarded' && chatMode !== 'plan' && isRefusalTurn(classification);
+    const approachRequested = classification.describesApproach || classification.explicitImplement;
+    // Plain code blocks become edits only when the user asked for a change (and, in Guarded
+    // Mode, described the approach). Otherwise they stay as examples in the answer.
+    const captureCodeBlocks =
+      chatMode === 'agent' &&
+      !refusal &&
+      (mode === 'normal'
+        ? isChangeRequest(classification.text) || classification.describesApproach
+        : approachRequested);
+    const wantsTests = asksForTests(classification.text);
+    let droppedTests = false;
     const extractor =
       chatMode === 'agent'
-        ? new EditBlockExtractor((raw) => {
-            const id = this.host.newId();
-            queued.push({ id, raw });
-            return id;
-          })
+        ? new EditBlockExtractor(
+            (raw) => {
+              // Do exactly what was asked: don't propose test code the user didn't ask for.
+              if (!wantsTests && looksLikeTestCode(raw.code ?? raw.replace)) {
+                droppedTests = true;
+                return null;
+              }
+              const id = this.host.newId();
+              queued.push({ id, raw });
+              return id;
+            },
+            { captureCodeBlocks },
+          )
         : undefined;
     let fallbackPath: string | undefined;
-    const refusal = mode === 'guarded' && chatMode !== 'plan' && isRefusalTurn(classification);
     let doneReason: string | undefined;
+    // Guarded refusals are buffered and reduced to "refusal + one hint" before display.
+    let refusalBuffer = '';
+    const show = (text: string) => {
+      if (!text) return;
+      if (refusal) refusalBuffer += text;
+      else this.appendText(assistant.id, text);
+    };
     const emit = (raw: string) => {
       const text = extractor ? extractor.push(raw) : raw;
-      const safe = text ? activeGuard.push(text) : '';
-      if (safe) this.appendText(assistant.id, safe);
-      this.drainEdits(assistant.id, queued, proposals, activeGuard, mode, fallbackPath);
+      show(text ? activeGuard.push(text) : '');
+      this.drainEdits(
+        assistant.id,
+        queued,
+        proposals,
+        mode === 'normal' || approachRequested,
+        mode,
+        fallbackPath,
+      );
     };
     const finishStream = () => {
       if (extractor) {
         const rest = extractor.finish();
-        const safe = rest ? activeGuard.push(rest) : '';
-        if (safe) this.appendText(assistant.id, safe);
+        show(rest ? activeGuard.push(rest) : '');
       }
-      this.flushGuard(assistant.id, activeGuard);
-      this.drainEdits(assistant.id, queued, proposals, activeGuard, mode, fallbackPath);
+      show(activeGuard.finish());
+      if (refusal) {
+        this.appendText(assistant.id, shortenRefusal(refusalBuffer));
+        refusalBuffer = '';
+      }
+      this.drainEdits(
+        assistant.id,
+        queued,
+        proposals,
+        mode === 'normal' || approachRequested,
+        mode,
+        fallbackPath,
+      );
+      if (droppedTests) {
+        const m = this.state.get(assistant.id);
+        if (m && !m.notes.includes(DROPPED_TESTS_NOTE)) {
+          this.state.update(assistant.id, { notes: [...m.notes, DROPPED_TESTS_NOTE] });
+          this.postMessage(assistant.id);
+        }
+      }
     };
 
     try {
@@ -511,12 +572,19 @@ export class ChatController {
         bundle.items.find((i) => i.kind === 'selection' || i.kind === 'file' || i.kind === 'current-file')
           ?.relPath ?? bundle.items.find((i) => i.kind === 'snippet')?.relPath;
 
+      // Agent mode: show code without line numbers so the model copies exact lines, and keep
+      // history short so small models don't repeat an earlier answer.
+      const contextItems =
+        chatMode === 'agent'
+          ? bundle.items.map((i) => ({ ...i, content: stripLineNumbers(i.content) }))
+          : bundle.items;
+      const history = this.state.historyForModel(user.id);
       const messages = buildMessages({
         mode,
         chatMode,
-        history: this.state.historyForModel(user.id),
+        history: chatMode === 'agent' ? history.slice(-4) : history,
         userText: refs.text,
-        context: bundle.items,
+        context: contextItems,
         turnNote: mode === 'guarded' ? turnReminder(classification, chatMode) : undefined,
       });
 
@@ -554,7 +622,7 @@ export class ChatController {
         emit(delta);
       }
       finishStream();
-      if (refusal && doneReason === 'length') this.trimToLastSentence(assistant.id);
+      this.deps.logger.debug(`Generation finished: ${doneReason ?? 'unknown'}`);
       await Promise.all(proposals);
       this.state.update(assistant.id, { status: 'done' });
     } catch (err) {
@@ -576,11 +644,19 @@ export class ChatController {
     } finally {
       this.tracker.end(controller);
       const report = activeGuard.report;
+      const madeEdits = (this.state.get(assistant.id)?.edits ?? []).some((e) => e.status !== 'failed');
       const final = this.state.update(assistant.id, {
         guardRemovals: report.removed.length,
-        approach: report.approach,
+        approach: report.approach || (mode === 'guarded' && approachRequested && madeEdits),
       })!;
-      await this.recordTurn(user, final, classification, report, bundle, errorCode);
+      await this.recordTurn(
+        user,
+        final,
+        classification,
+        { ...report, approach: !!final.approach },
+        bundle,
+        errorCode,
+      );
       await this.host.saveConversation(this.state.serialize());
       this.postState();
     }
@@ -591,13 +667,13 @@ export class ChatController {
     messageId: string,
     queued: Array<{ id: string; raw: RawEdit }>,
     proposals: Array<Promise<void>>,
-    guard: OutputGuard,
+    allowed: boolean,
     mode: Mode,
     fallbackPath: string | undefined,
   ): void {
     while (queued.length) {
       const { id, raw } = queued.shift()!;
-      if (mode === 'guarded' && !guard.report.approach) {
+      if (!allowed) {
         this.setEdit(
           messageId,
           this.editManager.block(
@@ -621,6 +697,14 @@ export class ChatController {
                 ) ?? info;
             }
             this.setEdit(messageId, info);
+            // Show the first proposed change straight away, like an agent editing the file.
+            if (info.status === 'pending' && !this.autoOpened.has(messageId)) {
+              this.autoOpened.add(messageId);
+              return this.editManager.openDiff(info.id).then((opened) => {
+                if (opened) this.setEdit(messageId, opened);
+              });
+            }
+            return undefined;
           })
           .catch((err: unknown) => {
             this.deps.logger.warn(`Proposing an edit failed: ${describeForLog(err)}`);
@@ -638,23 +722,10 @@ export class ChatController {
     this.postMessage(messageId);
   }
 
-  /** Cuts a length-capped answer back to its last complete sentence. */
-  private trimToLastSentence(id: string): void {
-    const m = this.state.get(id);
-    if (!m) return;
-    const t = m.text.trimEnd();
-    const cut = Math.max(
-      t.lastIndexOf('. '),
-      t.lastIndexOf('? '),
-      t.lastIndexOf('! '),
-      t.lastIndexOf('.\n'),
-      t.lastIndexOf('?\n'),
-    );
-    const last = /[.?!]$/.test(t) ? t.length : cut + 1;
-    if (last > 0 && last < t.length + 1) {
-      this.state.update(id, { text: t.slice(0, last) });
-      this.postMessage(id);
-    }
+  /** Same as editAction, for commands that only know the edit (e.g. the diff editor's title bar). */
+  async editActionById(editId: string, action: EditAction): Promise<void> {
+    const messageId = this.editManager.messageIdOf(editId);
+    if (messageId) await this.editAction(messageId, editId, action);
   }
 
   /** Review, accept, reject or revert an edit proposed in Agent mode. */
@@ -718,11 +789,6 @@ export class ChatController {
   private appendText(id: string, text: string): void {
     this.state.appendText(id, text);
     this.host.post({ type: 'append', id, text });
-  }
-
-  private flushGuard(id: string, guard: OutputGuard): void {
-    const tail = guard.finish();
-    if (tail) this.appendText(id, tail);
   }
 
   private postMessage(id: string): void {

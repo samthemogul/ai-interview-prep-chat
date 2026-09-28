@@ -32,6 +32,8 @@ export const COMMANDS = {
   askAboutWorkspace: `${ID}.askAboutWorkspace`,
   toggleInterviewMode: `${ID}.toggleInterviewMode`,
   switchChatMode: `${ID}.switchChatMode`,
+  acceptEdit: `${ID}.acceptEdit`,
+  rejectEdit: `${ID}.rejectEdit`,
   selectModel: `${ID}.selectModel`,
   downloadModel: `${ID}.downloadModel`,
   checkOllama: `${ID}.checkOllama`,

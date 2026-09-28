@@ -115,6 +115,41 @@ export function classifyRequest(input: string): Classification {
   };
 }
 
+const CHANGE_VERBS =
+  /\b(add|create|implement|write|build|make|fix|change|update|modify|edit|refactor|rename|remove|delete|replace|move|extract|convert|insert|append|generate|set up|wire up|hook up)\b/i;
+
+/** True when the message asks for a change to the code (used to decide when Agent mode edits files). */
+export function isChangeRequest(text: string): boolean {
+  const t = text.trim();
+  if (/^\/implement\b/i.test(t)) return true;
+  if (
+    /^(what|why|how does|how do|where|which|who|when|explain|describe|can you explain|tell me)\b/i.test(t) &&
+    !/\b(add|create|implement|fix|change)\b/i.test(t)
+  ) {
+    return false;
+  }
+  return CHANGE_VERBS.test(t);
+}
+
+/** True when the user asked for tests, so test code in the answer is wanted. */
+export function asksForTests(text: string): boolean {
+  return /\b(tests?|testing|unit ?tests?|pytest|jest|vitest|spec)\b/i.test(text);
+}
+
+/** Heuristic: the code is a test (so it shouldn't be added unless tests were asked for). */
+export function looksLikeTestCode(code: string): boolean {
+  if (
+    /^\s*(def test_|async def test_|class Test\w*|import pytest|from pytest|import unittest|from unittest)/m.test(
+      code,
+    )
+  ) {
+    return true;
+  }
+  if (/^\s*(describe|it|test)\s*\(\s*['"`]/m.test(code)) return true;
+  const asserts = (code.match(/^\s*(assert\b|expect\()/gm) ?? []).length;
+  return asserts >= 2;
+}
+
 /** True when a guarded turn should be answered with a short refusal and hint. */
 export function isRefusalTurn(c: Classification): boolean {
   return (
@@ -139,9 +174,9 @@ export function turnReminder(
   if (c.describesApproach || c.explicitImplement) {
     const how =
       chatMode === 'agent'
-        ? 'make the change with SEARCH/REPLACE edits'
+        ? 'write the file path on its own line and then a code block with only the new or changed code'
         : 'show only the new or changed code, not the whole file';
-    return `Turn note: the candidate may be describing an approach. If the message describes HOW to do it (steps, mechanism, data structure or control flow), implement exactly that approach: start your response with the line ${APPROACH_MARKER}, then ${how}. If it only states an outcome, or a real design decision is missing, do not write code: refuse briefly or ask for the missing decision.`;
+    return `Turn note: the candidate may be describing an approach. If the message describes HOW to do it (steps, mechanism, data structure or control flow), implement exactly that approach: start your response with the line ${APPROACH_MARKER}, then ${how}. Do not add tests, examples, curl commands or anything they did not ask for. If it only states an outcome, or a real design decision is missing, do not write code: refuse briefly or ask for the missing decision.`;
   }
   if (c.likelySolutionRequest) {
     return `Turn note: this message asks for code or a solution without describing an approach. ${SHORT_REFUSAL}`;

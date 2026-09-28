@@ -20,6 +20,8 @@ export interface UiEdit {
   preview: Array<{ t: '+' | '-' | ' ' | '…'; s: string }>;
   diffOpened: boolean;
   error?: string;
+  /** Code blocks that changed nothing (e.g. the model echoed existing code) aren't shown. */
+  hidden?: boolean;
 }
 
 export type EditAction = 'diff' | 'accept' | 'reject' | 'revert';
