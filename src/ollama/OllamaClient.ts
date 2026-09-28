@@ -42,6 +42,11 @@ const PROBE_TIMEOUT_MS = 2500;
 const LIST_TIMEOUT_MS = 5000;
 /** Loading a model into memory can take a while; this bounds the time to the first byte. */
 const FIRST_BYTE_TIMEOUT_MS = 120_000;
+/**
+ * How long Ollama keeps the model in memory after a request. Its default is 5 minutes, so
+ * after a short pause every question paid the model load time again.
+ */
+export const KEEP_ALIVE = '30m';
 
 /**
  * Client for the local Ollama HTTP API. It only ever talks to the configured endpoint
@@ -116,6 +121,7 @@ export class OllamaClient {
           model: req.model,
           messages: req.messages,
           stream: true,
+          keep_alive: KEEP_ALIVE,
           options: {
             temperature: req.temperature,
             num_ctx: req.contextWindow,
@@ -163,6 +169,24 @@ export class OllamaClient {
       throw err;
     }
     this.logger.debug('Stream ended without a done marker');
+  }
+
+  /**
+   * Loads the model into memory ahead of the first question (a request without a prompt
+   * only loads it). Never throws.
+   */
+  async warmUp(model: string): Promise<void> {
+    try {
+      const res = await this.fetchImpl(`${this.endpoint}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, keep_alive: KEEP_ALIVE }),
+        signal: linkSignals([], FIRST_BYTE_TIMEOUT_MS),
+      });
+      await safeText(res);
+    } catch (err) {
+      this.logger.debug(`Warm-up failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /** Downloads a model. Only called after explicit user confirmation. */
@@ -222,12 +246,16 @@ export async function* readNdjson(
     reader.cancel().catch(() => undefined);
   };
   signal?.addEventListener('abort', onAbort, { once: true });
+  let finished = false;
   try {
     while (true) {
       if (signal?.aborted) throw abortError();
       const { value, done } = await reader.read();
       if (signal?.aborted) throw abortError();
-      if (done) break;
+      if (done) {
+        finished = true;
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
       let nl: number;
       while ((nl = buffer.indexOf('\n')) >= 0) {
@@ -242,7 +270,9 @@ export async function* readNdjson(
     if (parsed) yield parsed;
   } finally {
     signal?.removeEventListener('abort', onAbort);
-    reader.releaseLock();
+    // The consumer stopped early: close the connection so Ollama stops generating.
+    if (!finished) reader.cancel().catch(() => undefined);
+    else reader.releaseLock();
   }
 }
 

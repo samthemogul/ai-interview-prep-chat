@@ -136,6 +136,14 @@ export function asksForTests(text: string): boolean {
   return /\b(tests?|testing|unit ?tests?|pytest|jest|vitest|spec)\b/i.test(text);
 }
 
+/** True when the user asked for comments or docstrings in the code. */
+export function asksForComments(text: string): boolean {
+  return (
+    /\b(comments?|commented|docstrings?|document(?:ation)?|jsdoc|annotate)\b/i.test(text) &&
+    !/\bcomment(?:ed)?\s+out\b/i.test(text)
+  );
+}
+
 /** Heuristic: the code is a test (so it shouldn't be added unless tests were asked for). */
 export function looksLikeTestCode(code: string): boolean {
   if (

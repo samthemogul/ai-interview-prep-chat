@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-09-28
+
+### Fixed
+
+- **Agent edits touch only the affected part of the file.** When a small model answered "add an endpoint" by repeating the whole file (rewritten imports, the database setup, every existing function and commented-out code, with the new function somewhere inside), the extension used to insert all of it and duplicate everything. It now splits such a block into its top-level parts and applies only what changed: the new function is inserted next to its neighbours, unchanged functions, setup lines and comments are skipped, and imports are merged — only the names the new code actually uses are added (for example `HTTPException` into an existing `from fastapi import FastAPI`), never a duplicate import line. Incidental rewrites of code you didn't ask about (for example `from pymongo import MongoClient` turned into `import pymongo`) are left alone, with a short note saying so.
+- Comments the model added to code are dropped unless you asked for comments.
+
+### Changed
+
+- **Explanations, hints and comments are short by default,** like a frontier model. Prose beyond a per-mode budget (3 sentences in Agent, 5 in Ask), filler ("Let me know if…"), and whole "Explanation", "How it works", "Summary" and "Testing" sections are removed — the code and the edits always come through in full. Ask for detail ("explain in detail", "step by step") and the budget is lifted.
+
+### Performance
+
+- Once the visible answer is complete, generation stops instead of letting the model keep writing text that would be hidden — noticeably faster on small local models that ramble after the code.
+- The model is loaded into memory in the background when you open the panel or pick a model, and kept loaded for 30 minutes (`keep_alive`), so the first question doesn't wait for the model to load and later questions don't reload it.
+- Streamed text is sent to the panel in ~40 ms batches and the panel re-renders only the newly added part of a long answer, rather than re-rendering the whole message on every token.
+- Context retrieval reads candidate files in parallel and runs the symbol lookup alongside the content search; the diff preview uses a faster line-diff.
+
 ## [0.2.1] - 2026-09-28
 
 ### Fixed

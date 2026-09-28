@@ -9,8 +9,19 @@
  *  2. The block's first and last lines both exist in the file → replace that range.
  *  3. Nothing in the block exists yet → insert it after the last similar top-level block
  *     (for example after the last `@app.get` route), before a `__main__` guard, or at the end.
+ *
+ * A block with several top-level parts (often the whole file repeated with one function
+ * added) is split up first and only the affected parts are applied; see chunks.ts.
  */
 import type { ApplyResult } from './applyEdit';
+import { COMMENT_LINE, applyOps, fuzzy, planChunks, splitTopLevel } from './chunks';
+
+export interface PlaceOptions {
+  /** The user's request, used to tell requested changes from incidental rewrites. */
+  request?: string;
+  /** Keep comments the model added (only when the user asked for comments). */
+  keepComments?: boolean;
+}
 
 const LINE_NO_PREFIX = /^\s*\d+\s*\|\s?/;
 
@@ -159,13 +170,68 @@ function topLevelGap(lines: string[]): number {
   return twos > ones ? 2 : 1;
 }
 
+/** Result covering only the lines that differ between `before` and `after`. */
+function spanResult(before: string[], after: string[], crlf: boolean, note?: string): ApplyResult {
+  let p = 0;
+  while (p < before.length && p < after.length && before[p] === after[p]) p++;
+  let q = 0;
+  while (
+    q < before.length - p &&
+    q < after.length - p &&
+    before[before.length - 1 - q] === after[after.length - 1 - q]
+  ) {
+    q++;
+  }
+  const text = after.join('\n');
+  return {
+    ok: true,
+    content: crlf ? text.replace(/\n/g, '\r\n') : text,
+    matched: 'exact',
+    startLine: p + 1,
+    searchLines: before.slice(p, before.length - q),
+    replaceLines: after.slice(p, after.length - q),
+    note,
+  };
+}
+
+/** Index after which new top-level code goes: after similar code, before `__main__`, or at the end. */
+function insertionPoint(lines: string[], first: string): number {
+  const prefix =
+    /^\s*(@\w+\.?|def |async def |class |function |export |func |fn |pub fn |\w+\.(?:get|post|put|patch|delete)\()/.exec(
+      first,
+    )?.[1];
+  if (prefix && indentOf(first) === 0) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i]!;
+      if (indentOf(l) === 0 && !isComment(l) && l.startsWith(prefix.trimStart())) {
+        return definitionEnd(lines, withDecorators(lines, i));
+      }
+    }
+  }
+  const main = lines.findIndex((l) => /^if\s+__name__\s*==\s*['"]__main__['"]\s*:/.test(l));
+  if (main > 0) {
+    let before = main - 1;
+    while (before >= 0 && !lines[before]!.trim()) before--;
+    return before;
+  }
+  let lastLine = lines.length - 1;
+  while (lastLine >= 0 && !lines[lastLine]!.trim()) lastLine--;
+  return lastLine;
+}
+
+/** Drops full-line comments the model added (comments already in the file are kept). */
+function dropAddedComments(block: string[], known: Set<string>): string[] {
+  return block.filter((l) => !COMMENT_LINE.test(l) || known.has(fuzzy(l)));
+}
+
 /** Applies a code block as an edit. See the module comment for the placement rules. */
-export function applyBlock(original: string | undefined, code: string): ApplyResult {
+export function applyBlock(original: string | undefined, code: string, opts: PlaceOptions = {}): ApplyResult {
   let block = trimBlankEdges(stripLineNumberPrefixes(code.replace(/\r\n/g, '\n').split('\n')));
   if (block.length && pathFromCodeComment(block[0]!)) block = trimBlankEdges(block.slice(1));
   if (!block.length) return { ok: false, reason: 'The code block was empty.' };
 
   if (original === undefined) {
+    if (!opts.keepComments) block = trimBlankEdges(dropAddedComments(block, new Set()));
     return {
       ok: true,
       content: block.join('\n') + '\n',
@@ -178,7 +244,13 @@ export function applyBlock(original: string | undefined, code: string): ApplyRes
 
   const crlf = original.includes('\r\n');
   const lines = (crlf ? original.replace(/\r\n/g, '\n') : original).split('\n');
+  const noop: ApplyResult = { ok: false, reason: 'NOOP: the code is already in the file.' };
+  const fuzzyKnown = new Set(lines.map(fuzzy).filter(Boolean));
+  if (!opts.keepComments) block = trimBlankEdges(dropAddedComments(block, fuzzyKnown));
+  // Collapse runs of blank lines left behind by removed comments.
+  block = block.filter((l, i) => l.trim() || i < 2 || block[i - 1]!.trim() || block[i - 2]!.trim());
   const nonBlank = block.filter((l) => l.trim());
+  if (!nonBlank.length) return noop;
   const first = nonBlank[0]!;
   const last = nonBlank[nonBlank.length - 1]!;
 
@@ -191,12 +263,33 @@ export function applyBlock(original: string | undefined, code: string): ApplyRes
       .filter((l) => l.trim())
       .map(norm)
       .join('\n');
-  const noop: ApplyResult = { ok: false, reason: 'NOOP: the code is already in the file.' };
 
   // Code that is entirely already in the file (including commented-out code) is an echo,
   // not a change, however it is positioned.
-  const knownLines = new Set(lines.map(norm).filter(Boolean));
-  if (nonBlank.every((l) => knownLines.has(norm(l)))) return noop;
+  if (nonBlank.every((l) => fuzzyKnown.has(fuzzy(l)))) return noop;
+
+  // Several top-level parts (often the whole file repeated): apply only the affected parts.
+  if (indentOf(first) === 0) {
+    const chunks = splitTopLevel(block);
+    const plan = chunks
+      ? planChunks(lines, chunks, {
+          request: opts.request,
+          gap: topLevelGap(lines),
+          insertAt: (firstLine) => insertionPoint(lines, firstLine) + 1,
+        })
+      : undefined;
+    if (plan) {
+      const next = plan.ops.length ? applyOps(lines, plan.ops) : lines;
+      if (next) {
+        const note = plan.keptUnchanged.length
+          ? `Left ${plan.keptUnchanged.map((n) => `\`${n}\``).join(', ')} as it was (not part of your request).`
+          : undefined;
+        if (next === lines || next.join('\n') === lines.join('\n')) return noop;
+        return spanResult(lines, next, crlf, note);
+      }
+    }
+  }
+
   const incomplete: ApplyResult = {
     ok: false,
     reason:
@@ -258,8 +351,7 @@ export function applyBlock(original: string | undefined, code: string): ApplyRes
 
   // If most of the block already exists but we couldn't anchor it, don't guess.
   // Commented-out code counts as "already there": echoing it back is not a change.
-  const known = new Set(lines.map(norm).filter(Boolean));
-  const knownCount = nonBlank.filter((l) => known.has(norm(l))).length;
+  const knownCount = nonBlank.filter((l) => fuzzyKnown.has(fuzzy(l))).length;
   if (knownCount === nonBlank.length) return noop;
   if (knownCount / nonBlank.length >= 0.5) {
     return {
@@ -271,33 +363,7 @@ export function applyBlock(original: string | undefined, code: string): ApplyRes
 
   // 3. New code → insert after the last similar top-level block, before a __main__ guard, or at the end.
   const gap = topLevelGap(lines);
-  const prefix =
-    /^\s*(@\w+\.?|def |async def |class |function |export |func |fn |pub fn |\w+\.(?:get|post|put|patch|delete)\()/.exec(
-      first,
-    )?.[1];
-  let insertAfter = -1;
-  if (prefix && indentOf(first) === 0) {
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const l = lines[i]!;
-      if (indentOf(l) === 0 && !isComment(l) && l.startsWith(prefix.trimStart())) {
-        insertAfter = definitionEnd(lines, withDecorators(lines, i));
-        break;
-      }
-    }
-  }
-  if (insertAfter < 0) {
-    const main = lines.findIndex((l) => /^if\s+__name__\s*==\s*['"]__main__['"]\s*:/.test(l));
-    if (main > 0) {
-      let before = main - 1;
-      while (before >= 0 && !lines[before]!.trim()) before--;
-      insertAfter = before;
-    }
-  }
-  if (insertAfter < 0) {
-    let lastLine = lines.length - 1;
-    while (lastLine >= 0 && !lines[lastLine]!.trim()) lastLine--;
-    insertAfter = lastLine;
-  }
+  const insertAfter = insertionPoint(lines, first);
   const pad = Array.from({ length: gap }, () => '');
   // Keep the blank lines that already followed the insertion point after the new block.
   let after = insertAfter + 1;

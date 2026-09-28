@@ -10,6 +10,8 @@ export type ApplyResult =
       startLine: number;
       searchLines: string[];
       replaceLines: string[];
+      /** Short note for the user about what was left out, if anything. */
+      note?: string;
     }
   | { ok: false; reason: string };
 
@@ -141,36 +143,54 @@ export function applySearchReplace(
   };
 }
 
-/** Longest-common-subsequence line diff for small regions. */
+/** Longest-common-subsequence line diff. Equal leading and trailing lines are matched first. */
 export function diffLines(a: string[], b: string[]): PreviewLine[] {
-  const n = a.length;
-  const m = b.length;
-  if (n * m > 250_000) {
-    return [...a.map((s) => ({ t: '-' as const, s })), ...b.map((s) => ({ t: '+' as const, s }))];
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) {
+    suf++;
   }
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  const head: PreviewLine[] = a.slice(0, pre).map((s) => ({ t: ' ', s }));
+  const tail: PreviewLine[] = a.slice(a.length - suf).map((s) => ({ t: ' ', s }));
+  const x = a.slice(pre, a.length - suf);
+  const y = b.slice(pre, b.length - suf);
+  const n = x.length;
+  const m = y.length;
+  if (n * m > 1_000_000) {
+    return [
+      ...head,
+      ...x.map((s) => ({ t: '-' as const, s })),
+      ...y.map((s) => ({ t: '+' as const, s })),
+      ...tail,
+    ];
+  }
+  // dp[i][j] = LCS length of x[i..] and y[j..], stored flat.
+  const w = m + 1;
+  const dp = new Uint32Array((n + 1) * w);
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+      dp[i * w + j] =
+        x[i] === y[j] ? dp[(i + 1) * w + j + 1]! + 1 : Math.max(dp[(i + 1) * w + j]!, dp[i * w + j + 1]!);
     }
   }
-  const out: PreviewLine[] = [];
+  const out: PreviewLine[] = head;
   let i = 0;
   let j = 0;
   while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      out.push({ t: ' ', s: a[i]! });
+    if (x[i] === y[j]) {
+      out.push({ t: ' ', s: x[i]! });
       i++;
       j++;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
-      out.push({ t: '-', s: a[i++]! });
+    } else if (dp[(i + 1) * w + j]! >= dp[i * w + j + 1]!) {
+      out.push({ t: '-', s: x[i++]! });
     } else {
-      out.push({ t: '+', s: b[j++]! });
+      out.push({ t: '+', s: y[j++]! });
     }
   }
-  while (i < n) out.push({ t: '-', s: a[i++]! });
-  while (j < m) out.push({ t: '+', s: b[j++]! });
-  return out;
+  while (i < n) out.push({ t: '-', s: x[i++]! });
+  while (j < m) out.push({ t: '+', s: y[j++]! });
+  return out.concat(tail);
 }
 
 /** Counts changes and builds a compact preview with at most `maxLines` lines. */
