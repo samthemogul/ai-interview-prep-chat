@@ -124,9 +124,13 @@ describe('chat history', () => {
           status: 'accepted',
           isNew: false,
           inferredPath: true,
-          added: 6,
+          added: 3,
           removed: 0,
-          preview: [],
+          preview: [
+            { t: '+', s: '@app.delete("/users/{id}")' },
+            { t: '+', s: 'def delete_user(id: str):' },
+            { t: '+', s: '    users.delete_one({"_id": id})' },
+          ],
           diffOpened: true,
         },
       ],
@@ -143,12 +147,16 @@ describe('chat history', () => {
     });
     const hist = s.historyForModel('3');
     const assistant = hist.find((m) => m.role === 'assistant')!.content;
-    // The model must not be handed a machine-looking edit tag it will copy verbatim.
+    // The model must not be handed a machine-looking tag it copies instead of writing code,
+    // nor a bare note that reads as "edit described, no code given".
     expect(assistant).not.toContain('[Proposed edit');
-    expect(assistant).not.toContain('+6');
     expect(assistant).not.toContain(': accepted');
     expect(assistant).not.toContain('%%EDIT');
-    expect(assistant).toContain('(I edited pyserver.py.)');
+    expect(assistant).not.toContain('(I edited');
+    // Instead it gets a real code block, so the learned pattern is "edit = write code".
+    expect(assistant).toContain('```');
+    expect(assistant).toContain('@app.delete("/users/{id}")');
+    expect(assistant).toContain('def delete_user(id: str):');
     expect(assistant).toContain('Adding it.');
   });
 

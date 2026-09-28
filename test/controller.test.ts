@@ -709,12 +709,14 @@ describe('Agent mode', () => {
     await controller.editAction(msg.id, msg.edits![0]!.id, 'accept');
     await controller.send('now add a delete endpoint', NO_CHIPS);
     const history = ollama.chatRequests[1]!.messages.filter((m: ChatMessage) => m.role === 'assistant');
-    // A small model copies a machine-looking "[Proposed edit … : accepted]" line verbatim
-    // instead of writing new code, so history must not contain it.
+    // History must not contain a tag or a bare note the model copies instead of writing code;
+    // it gets the actual edit rebuilt as a code block so the learned pattern stays "write code".
     expect(history[0]!.content).not.toContain('[Proposed edit');
     expect(history[0]!.content).not.toContain('accepted]');
     expect(history[0]!.content).not.toContain('%%EDIT');
-    expect(history[0]!.content).toContain('(I edited pyserver.py.)');
+    expect(history[0]!.content).not.toContain('(I edited');
+    expect(history[0]!.content).toContain('```');
+    expect(history[0]!.content).toMatch(/def get_one_user|@app\.get/);
   });
 
   it('uses the agent system prompt with the edit format', async () => {
