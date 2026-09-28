@@ -282,7 +282,8 @@ describe('ChatController: Guarded Interview Mode', () => {
     await controller.send('fix the timeout bug in @file:src/db/pool.ts', NO_CHIPS);
     const answer = host.lastState()!.messages[1]!;
     expect(answer.text).not.toContain('finally');
-    expect(answer.text).toContain('Code removed');
+    expect(answer.text).toMatch(/^I can't write that for you in Guarded Interview Mode\./);
+    expect(answer.text.split(/(?<=[.?!])\s+/).length).toBeLessThanOrEqual(3);
     expect(answer.guardRemovals).toBe(1);
     const turn = host.latestTranscript()!.events[0]!;
     expect(turn.type === 'turn' && turn.flags).toEqual(
@@ -561,12 +562,17 @@ describe('Guarded Ask: short refusals', () => {
     const { host, controller, ollama } = setupModes(() => rambling);
     await controller.refreshOllama();
     await controller.send('create a get one user endpoint', NO_CHIPS);
-    expect(ollama.chatRequests[0]!.options.num_predict).toBe(180);
+    expect(ollama.chatRequests[0]!.options.num_predict).toBe(120);
     const note = ollama.chatRequests[0]!.messages.find((m: ChatMessage) => m.content.startsWith('Turn note'));
     expect(note!.content).toMatch(/at most three short sentences/);
     const text = host.lastState()!.messages[1]!.text;
-    expect(text.endsWith('.')).toBe(true);
+    expect(text).not.toContain('step-by-step');
     expect(text).not.toContain('keeps going');
+    // Nothing is streamed for a refusal until it has been shortened.
+    const streamed = host.posted
+      .filter((m) => m.type === 'append')
+      .map((m) => (m.type === 'append' ? m.text : ''));
+    expect(streamed).toEqual([text]);
   });
 
   it('does not cap approach turns or ordinary questions', async () => {
@@ -626,12 +632,14 @@ describe('Agent mode', () => {
     expect(msg.text).toContain('%%EDIT:');
     expect(msg.text).not.toContain('SEARCH');
     const edit = msg.edits![0]!;
-    expect(edit).toMatchObject({ path: 'pyserver.py', status: 'pending', diffOpened: false });
+    // The first proposed change opens as a diff automatically.
+    expect(edit).toMatchObject({ path: 'pyserver.py', status: 'pending', diffOpened: true });
+    expect(editHost.diffs).toEqual([edit.id]);
     expect(edit.added).toBeGreaterThan(4);
     expect(editHost.files['pyserver.py']).toBe(PYSERVER);
 
     await controller.editAction(msg.id, edit.id, 'diff');
-    expect(editHost.diffs).toEqual([edit.id]);
+    expect(editHost.diffs).toEqual([edit.id, edit.id]);
     await controller.editAction(msg.id, edit.id, 'accept');
     expect(editHost.files['pyserver.py']).toContain('def get_one_user(id: str):');
     expect(host.lastState()!.messages[1]!.edits![0]!.status).toBe('accepted');
@@ -661,7 +669,7 @@ describe('Agent mode', () => {
     await controller.editAction(msg.id, msg.edits![0]!.id, 'revert');
     expect(editHost.files['pyserver.py']).toBe(PYSERVER);
     const edits = host.latestTranscript()!.events.filter((e) => e.type === 'edit');
-    expect(edits).toMatchObject([{ action: 'accepted', reviewed: false }, { action: 'reverted' }]);
+    expect(edits).toMatchObject([{ action: 'accepted', reviewed: true }, { action: 'reverted' }]);
 
     await controller.send('add it again', NO_CHIPS);
     msg = host.lastState()!.messages[3]!;
@@ -737,5 +745,98 @@ describe('Plan mode', () => {
     expect(ollama.chatRequests[0]!.messages[0]!.content).toContain('Do not write the plan for them');
     await controller.implementPlan();
     expect(controller.currentChatMode).toBe('plan');
+  });
+});
+
+describe('Agent mode: small-model output (0.2.1)', () => {
+  const SMALL_MODEL_REPLY = [
+    'To implement a GET one user endpoint `/users/{id}`, we need to:\n\n',
+    '1. Define the endpoint.\n2. Retrieve the user.\n\n',
+    "Here's the implementation:\n",
+    '```python\n# pyserver.py:1-2\n1 | from fastapi import FastAPI\n2 | from pymongo import MongoClient\n```\n\n',
+    '```python\n# pyserver.py:78-84\n',
+    '78 | @app.get("/users/{id}", status_code=200)\n',
+    '79 | def get_user(id: str):\n',
+    '80 |     user = users.find_one({"_id": ObjectId(id)})\n',
+    '81 |     if user:\n',
+    '82 |         return serialize(user)\n',
+    '83 |     else:\n',
+    '84 |         return {"error": "User not found"}, 404\n',
+    '```\n\n',
+    'Testing:\n```python\ndef test_get_user():\n    r = client.get("/users/1")\n    assert r.status_code == 200\n    assert r.json()["name"]\n```\n',
+    '```sh\ncurl -X GET "http://localhost:8000/users/1"\n```\n',
+  ];
+
+  it('turns a plain code block with copied line numbers into an edit, skips echoes and unrequested tests', async () => {
+    const { host, controller, editHost } = setupModes(() => SMALL_MODEL_REPLY, { chatMode: 'agent' });
+    await controller.refreshOllama();
+    await controller.send(
+      'create a get one user endpoint /users/{id} that take s in the user id, queries the database and returns the user if founf or returns a json with 404 error code saying it is not found',
+      NO_CHIPS,
+    );
+    const msg = host.lastState()!.messages[1]!;
+    const visible = msg.edits!.filter((e) => !e.hidden);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({ path: 'pyserver.py', status: 'pending', removed: 0 });
+    // The echoed imports were recognised as "already in the file" and hidden.
+    expect(msg.edits!.some((e) => e.hidden)).toBe(true);
+    // The test the user didn't ask for is gone, with a note.
+    expect(msg.text).not.toContain('test_get_user');
+    expect(msg.notes).toContain("Left out test code you didn't ask for. Ask for tests if you want them.");
+    expect(editHost.diffs).toEqual([visible[0]!.id]);
+
+    await controller.editAction(msg.id, visible[0]!.id, 'accept');
+    const after = editHost.files['pyserver.py']!;
+    expect(after).toContain('@app.get("/users/{id}", status_code=200)\ndef get_user(id: str):');
+    expect(after).not.toMatch(/^\d+ \|/m);
+    // Inserted after the last route, not at the top of the file.
+    expect(after.indexOf('def get_user')).toBeGreaterThan(after.indexOf('def create_user'));
+  });
+
+  it('keeps tests when the user asked for them', async () => {
+    const { host, controller } = setupModes(
+      () => [
+        'tests/test_users.py\n```python\ndef test_get_user():\n    assert get("/users/1").status_code == 200\n    assert True\n```\n',
+      ],
+      { mode: 'normal', chatMode: 'agent' },
+    );
+    await controller.refreshOllama();
+    await controller.send('add a test for the get user endpoint', NO_CHIPS);
+    const edit = host.lastState()!.messages[1]!.edits![0]!;
+    expect(edit).toMatchObject({ path: 'tests/test_users.py', isNew: true, status: 'pending' });
+  });
+
+  it('does not turn examples into edits when the user only asked a question', async () => {
+    const { host, controller } = setupModes(
+      () => ['`find_one` returns a single document:\n```python\nuser = users.find_one({"email": e})\n```\n'],
+      { mode: 'normal', chatMode: 'agent' },
+    );
+    await controller.refreshOllama();
+    await controller.send('how does find_one work?', NO_CHIPS);
+    const msg = host.lastState()!.messages[1]!;
+    expect(msg.edits ?? []).toHaveLength(0);
+    expect(msg.text).toContain('users.find_one');
+  });
+
+  it('sends agent context without line numbers', async () => {
+    const { controller, ollama } = setupModes(() => ['ok'], { mode: 'normal', chatMode: 'agent' });
+    await controller.refreshOllama();
+    await controller.send('add a delete endpoint to @file:pyserver.py', NO_CHIPS);
+    const user = ollama.chatRequests[0]!.messages.at(-1)!.content;
+    expect(user).toContain('def serialize(mongo_result):');
+    expect(user).not.toMatch(/^\s*\d+ \| /m);
+  });
+
+  it('only auto-opens the first edit of an answer', async () => {
+    const two = [
+      ...EDIT_REPLY,
+      '\npyserver.py\n```python\n<<<<<<< SEARCH\napp = FastAPI()\n=======\napp = FastAPI(title="Users")\n>>>>>>> REPLACE\n```\n',
+    ];
+    const { host, controller, editHost } = setupModes(() => two, { mode: 'normal', chatMode: 'agent' });
+    await controller.refreshOllama();
+    await controller.send('add a get one user endpoint and set the app title', NO_CHIPS);
+    const edits = host.lastState()!.messages[1]!.edits!;
+    expect(edits.filter((e) => e.status === 'pending')).toHaveLength(2);
+    expect(editHost.diffs).toHaveLength(1);
   });
 });

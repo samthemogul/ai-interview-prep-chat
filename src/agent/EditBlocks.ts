@@ -25,6 +25,13 @@ export interface RawEdit {
   path?: string;
   search: string;
   replace: string;
+  /**
+   * Set when the model wrote an ordinary code block instead of SEARCH/REPLACE. The
+   * extension works out where the code belongs (see placeBlock.ts).
+   */
+  code?: string;
+  /** Fence language of a code block, e.g. "python". */
+  lang?: string;
   /** True when the stream ended before the block was complete. */
   incomplete?: boolean;
 }
@@ -51,7 +58,37 @@ export function pathFromLine(line: string): string | undefined {
   return /^[\w@.\-/\\]+\.[A-Za-z0-9]{1,10}$/.test(t) && !/^\d+(\.\d+)+$/.test(t) ? t : undefined;
 }
 
-type State = 'text' | 'search' | 'replace';
+type State = 'text' | 'search' | 'replace' | 'code';
+
+/** Fence languages that are never file edits (commands, output, prose). */
+const NON_CODE_LANGS = new Set([
+  'sh',
+  'bash',
+  'shell',
+  'zsh',
+  'console',
+  'terminal',
+  'powershell',
+  'ps1',
+  'ps',
+  'cmd',
+  'bat',
+  'text',
+  'txt',
+  'plaintext',
+  'output',
+  'log',
+  'http',
+  'diff',
+  'patch',
+  'markdown',
+  'md',
+]);
+
+export interface ExtractorOptions {
+  /** Agent mode: also treat ordinary fenced code blocks as proposed edits. */
+  captureCodeBlocks?: boolean;
+}
 
 export class EditBlockExtractor {
   private pending = '';
@@ -65,9 +102,18 @@ export class EditBlockExtractor {
   private searchLines: string[] = [];
   private replaceLines: string[] = [];
   private count = 0;
+  private codeFence = '';
+  private codeLang = '';
+  private codeLines: string[] = [];
 
-  /** `onEdit` receives each complete block and returns the placeholder id to insert. */
-  constructor(private readonly onEdit: (edit: RawEdit) => string) {}
+  /**
+   * `onEdit` receives each complete block and returns the placeholder id to insert, or
+   * null to drop the block from the response entirely.
+   */
+  constructor(
+    private readonly onEdit: (edit: RawEdit) => string | null,
+    private readonly options: ExtractorOptions = {},
+  ) {}
 
   get editCount(): number {
     return this.count;
@@ -104,7 +150,9 @@ export class EditBlockExtractor {
       out += `${this.heldFence}\n`;
       this.heldFence = undefined;
     }
-    if (this.state !== 'text') {
+    if (this.state === 'code') {
+      out += this.emitCode(true);
+    } else if (this.state !== 'text') {
       // The stream stopped mid-block: report it so the UI can show it as incomplete.
       out += this.emit(true);
     }
@@ -121,6 +169,15 @@ export class EditBlockExtractor {
 
   private processLine(line: string, already: number, hadNewline: boolean): string {
     const nl = hadNewline ? '\n' : '';
+
+    if (this.state === 'code') {
+      const close = FENCE_CLOSE_RE.exec(line);
+      if (close && close[1]![0] === this.codeFence[0] && close[1]!.length >= this.codeFence.length) {
+        return this.emitCode(false);
+      }
+      this.codeLines.push(line);
+      return '';
+    }
 
     if (this.state === 'search') {
       if (DIVIDER_RE.test(line)) this.state = 'replace';
@@ -145,6 +202,17 @@ export class EditBlockExtractor {
       const fence = this.heldFence;
       this.heldFence = undefined;
       if (search) return this.startBlock(search[1], true, fence);
+      const open = FENCE_OPEN_RE.exec(fence)!;
+      const lang = (open[2] ?? '').toLowerCase();
+      if (this.options.captureCodeBlocks && !NON_CODE_LANGS.has(lang)) {
+        // An ordinary code block in Agent mode: collect it and propose it as an edit.
+        this.state = 'code';
+        this.codeFence = open[1]!;
+        this.codeLang = lang;
+        this.codeLines = [];
+        this.path = pathFromLine(open[3] ?? '') ?? pathFromLine(this.lastTextLine);
+        return this.processLine(line, 0, hadNewline);
+      }
       const rest = this.processLine(line, 0, hadNewline);
       return `${fence}\n${rest}`;
     }
@@ -192,6 +260,29 @@ export class EditBlockExtractor {
     this.expectCloseFence = this.fenced;
     this.count++;
     const id = this.onEdit(edit);
-    return `\n${editPlaceholder(id)}\n\n`;
+    return id === null ? '' : `\n${editPlaceholder(id)}\n\n`;
+  }
+
+  private emitCode(incomplete: boolean): string {
+    const lines = this.codeLines;
+    this.state = 'text';
+    this.codeLines = [];
+    // Blocks that actually contain SEARCH/REPLACE markers are handled by the normal parser.
+    if (lines.some((l) => SEARCH_RE.test(l))) {
+      let out = '';
+      for (const l of lines) out += this.processLine(l, 0, true);
+      return out;
+    }
+    const edit: RawEdit = {
+      path: this.path,
+      search: '',
+      replace: '',
+      code: lines.join('\n'),
+      lang: this.codeLang || undefined,
+      incomplete: incomplete || undefined,
+    };
+    this.count++;
+    const id = this.onEdit(edit);
+    return id === null ? '' : `\n${editPlaceholder(id)}\n\n`;
   }
 }

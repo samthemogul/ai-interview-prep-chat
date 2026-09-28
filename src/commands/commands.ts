@@ -21,6 +21,7 @@ import {
   EXTENSION_DISPLAY_NAME,
   OLLAMA_DOWNLOAD_URL,
   OLLAMA_LIBRARY_URL,
+  PROPOSED_EDIT_SCHEME,
   TRANSCRIPT_SCHEME,
 } from '../constants';
 import type { ChannelLogger } from '../utils/logger';
@@ -144,6 +145,21 @@ export function registerCommands(d: CommandDeps): void {
     if (rel) await provider.prefill(`${fileRef(rel)} `);
   });
   reg(COMMANDS.askAboutWorkspace, () => provider.prefill('@workspace '));
+
+  // Accept / Reject from the diff editor's title bar. The diff's right side carries the edit id.
+  const editIdFrom = (arg: unknown): string | undefined => {
+    const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+    if (!uri || uri.scheme !== PROPOSED_EDIT_SCHEME) return undefined;
+    return uri.query.replace(/-original$/, '');
+  };
+  reg(COMMANDS.acceptEdit, async (arg) => {
+    const id = editIdFrom(arg);
+    if (id) await controller.editActionById(id, 'accept');
+  });
+  reg(COMMANDS.rejectEdit, async (arg) => {
+    const id = editIdFrom(arg);
+    if (id) await controller.editActionById(id, 'reject');
+  });
 
   reg(COMMANDS.switchChatMode, async () => {
     const pick = await vscode.window.showQuickPick(

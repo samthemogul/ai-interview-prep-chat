@@ -53,6 +53,10 @@ Run through this before each release in an Extension Development Host (F5) or wi
 - [ ] Unguarded Plan: **Implement with Agent** switches to Agent and proposes edits.
 - [ ] Guarded Plan: the AI reviews your plan with questions and doesn't write one.
 - [ ] After reloading the window, pending edits show as expired.
+- [ ] With `qwen2.5-coder:1.5b` in Guarded Agent, describing an approach produces an edit card and an automatically opened diff (not just a code block).
+- [ ] **Accept** / **Reject** in the diff editor title bar work and close the diff.
+- [ ] Test code only appears when you ask for tests; otherwise a note says it was left out.
+- [ ] Guarded refusals are one sentence plus one question or hint.
 
 ## Modes and transcript
 

@@ -15,7 +15,7 @@ export const GUARDED_EXAMPLE_LINE_CAP = 5;
 export const GUARDED_EXAMPLE_BLOCK_CAP = 1;
 export const APPROACH_LINE_CAP = 80;
 /** Token budget for guarded refusals, so a model that "explains then refuses" is cut short. */
-export const GUARDED_REFUSAL_MAX_TOKENS = 180;
+export const GUARDED_REFUSAL_MAX_TOKENS = 120;
 
 export type ChatMode = 'ask' | 'plan' | 'agent';
 
@@ -26,26 +26,25 @@ const NO_TOOLS = `You cannot edit files, run commands, run tests, browse the int
 
 const CHANGED_CODE_ONLY = `When you show code for a change, show only the new or changed lines (for example just the new function or the lines that change), never the whole file and never unchanged code around it.`;
 
-const EDIT_FORMAT = `How to edit files (Agent mode):
-Propose each change as a SEARCH/REPLACE block. Write the file's workspace-relative path on its own line, then the block:
+const EXACTLY_WHAT_WAS_ASKED = `Do exactly what was asked and nothing more: no tests, usage examples, curl commands, extra endpoints, refactors or long explanations unless the user asks for them.`;
 
-path/to/file.py
+const EDIT_FORMAT = `How to change files (Agent mode):
+Write the file path on its own line, then a code block with ONLY the new or changed code:
+
+pyserver.py
 \`\`\`python
-<<<<<<< SEARCH
-(the exact existing lines to replace, copied from the file, with enough context to be unique)
-=======
-(the new lines)
->>>>>>> REPLACE
+@app.get("/users/{id}")
+def get_user(id: str):
+    ...
 \`\`\`
 
-Rules for edits:
-- SEARCH must copy the current file exactly, including indentation.
-- To add new code, SEARCH for a nearby existing line and put that same line plus the new code in REPLACE.
-- To create a new file, use the new path with an empty SEARCH section.
-- Use several small blocks rather than rewriting a whole file. Never output the whole file.
-- The user reviews every edit as a diff and decides whether to accept it. Nothing changes until they accept, so never claim a change has been made.
-- You cannot run commands or tests. After the edits, tell the user in one or two sentences how to check the change.
-Keep the text around the edits short.`;
+Rules for changes:
+- To change an existing function, write the whole updated function. To add something new, write only the new code; it is inserted next to similar code.
+- Never repeat the whole file, never repeat unchanged functions and never add line numbers.
+- To create a new file, use the new path.
+- For precise replacements you may instead use a SEARCH/REPLACE block: <<<<<<< SEARCH, the exact existing lines, =======, the new lines, >>>>>>> REPLACE.
+- The user reviews every change as a diff and decides whether to accept it. Nothing changes until they accept, so never claim a change has been made.
+- You cannot run commands or tests. After the code, say in one sentence how to check it.`;
 
 const GUARDED_CORE = `You are an AI assistant helping a candidate during a software engineering interview. You are a conceptual mentor, not a code generator.
 
@@ -90,15 +89,27 @@ Help the user create and refine an implementation plan before any code is writte
 Do not write implementation code; short function signatures are fine. Ask clarifying questions when the requirements are unclear. When the plan is agreed, the user can switch to Agent mode to implement it.`;
 
 const GUARDED_AGENT = `AGENT MODE (guarded):
-You can propose file edits, but only to implement an approach the candidate described (approach-directed implementation above). In that case start with the ${APPROACH_MARKER} line, then make the change with SEARCH/REPLACE edits instead of a code block. For every other request, do not propose edits: answer, or refuse briefly with a hint, as described above.`;
+You can change files, but only to implement an approach the candidate described (approach-directed implementation above). In that case start with the ${APPROACH_MARKER} line, then write the change as described below. For every other request, do not propose edits: answer, or refuse briefly with a hint, as described above.`;
 
 const NORMAL_AGENT = `AGENT MODE:
-When the user asks for a change, make it directly with SEARCH/REPLACE edits. Explain what you changed in a sentence or two. If the request is ambiguous, ask a short question before editing.`;
+When the user asks for a change, make it directly as described below. Explain what you changed in one sentence. If the request is ambiguous, ask a short question before editing.`;
 
 /** Guarded Interview Mode, Ask (the default). */
-export const GUARDED_SYSTEM_PROMPT = [GUARDED_CORE, CHANGED_CODE_ONLY, DATA_RULES, NO_TOOLS].join('\n\n');
+export const GUARDED_SYSTEM_PROMPT = [
+  GUARDED_CORE,
+  CHANGED_CODE_ONLY,
+  EXACTLY_WHAT_WAS_ASKED,
+  DATA_RULES,
+  NO_TOOLS,
+].join('\n\n');
 /** Unguarded, Ask. */
-export const NORMAL_SYSTEM_PROMPT = [NORMAL_CORE, CHANGED_CODE_ONLY, DATA_RULES, NO_TOOLS].join('\n\n');
+export const NORMAL_SYSTEM_PROMPT = [
+  NORMAL_CORE,
+  CHANGED_CODE_ONLY,
+  EXACTLY_WHAT_WAS_ASKED,
+  DATA_RULES,
+  NO_TOOLS,
+].join('\n\n');
 
 export function systemPromptFor(mode: 'guarded' | 'normal', chatMode: ChatMode = 'ask'): string {
   const core = mode === 'guarded' ? GUARDED_CORE : NORMAL_CORE;
@@ -106,7 +117,13 @@ export function systemPromptFor(mode: 'guarded' | 'normal', chatMode: ChatMode =
     case 'plan':
       return [core, mode === 'guarded' ? GUARDED_PLAN : NORMAL_PLAN, DATA_RULES, NO_TOOLS].join('\n\n');
     case 'agent':
-      return [core, mode === 'guarded' ? GUARDED_AGENT : NORMAL_AGENT, EDIT_FORMAT, DATA_RULES].join('\n\n');
+      return [
+        core,
+        mode === 'guarded' ? GUARDED_AGENT : NORMAL_AGENT,
+        EDIT_FORMAT,
+        EXACTLY_WHAT_WAS_ASKED,
+        DATA_RULES,
+      ].join('\n\n');
     default:
       return mode === 'guarded' ? GUARDED_SYSTEM_PROMPT : NORMAL_SYSTEM_PROMPT;
   }

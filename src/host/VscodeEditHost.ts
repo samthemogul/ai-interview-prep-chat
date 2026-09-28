@@ -101,6 +101,18 @@ export class VscodeEditHost implements EditHost, vscode.TextDocumentContentProvi
     );
   }
 
+  async closeDiff(id: string): Promise<void> {
+    const tabs = vscode.window.tabGroups.all
+      .flatMap((g) => g.tabs)
+      .filter(
+        (t) =>
+          t.input instanceof vscode.TabInputTextDiff &&
+          t.input.modified.scheme === PROPOSED_EDIT_SCHEME &&
+          t.input.modified.query === id,
+      );
+    if (tabs.length) await vscode.window.tabGroups.close(tabs);
+  }
+
   private uriFor(relPath: string): vscode.Uri {
     const uri = this.indexer.resolve(relPath);
     if (!uri) throw new Error(`${relPath} is not inside the workspace.`);

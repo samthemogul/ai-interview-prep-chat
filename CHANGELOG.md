@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-09-28
+
+### Fixed
+
+- **Agent mode now works with small models.** Models like `qwen2.5-coder:1.5b` rarely write the edit format; they write ordinary code blocks (often copying the context's line numbers). Agent mode now turns those code blocks into edits itself: it reads the file from a path line or a `# file.py:12` comment, strips copied line numbers, and places the code by replacing the function it redefines or inserting new code after similar code (for example after the last route).
+- Code the model merely echoes back (including commented-out code) is recognised as no change and not shown as an edit.
+- Safety: a partial snippet can never overwrite a whole function or class (unbalanced braces or a much shorter replacement are refused).
+- **Only what you asked for:** test code is left out unless you asked for tests (with a note saying so), and the prompts forbid unrequested tests, examples and curl commands.
+- **Guarded refusals are short, enforced in code:** the reply is buffered and reduced to one refusal sentence plus one guiding question or hint; lists and step-by-step explanations are dropped. The token cap is now 120.
+
+### Changed
+
+- The first proposed edit of an answer opens as a diff automatically, with **Accept** and **Reject** buttons in the diff editor's title bar. The diff closes after you decide.
+- Agent mode sends code without line numbers and keeps a shorter history, so small models copy exact lines and don't repeat earlier answers.
+- In Agent mode, code blocks only become edits when you ask for a change (or, in Guarded Mode, describe an approach). Answers to questions keep their examples as normal code blocks.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added
