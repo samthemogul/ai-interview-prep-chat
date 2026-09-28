@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+media/codicons/
+coverage/
+*.vsix
+.vscode-test/
+.DS_Store

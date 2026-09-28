@@ -1,0 +1,376 @@
+{
+  "name": "ai-interview-prep-chat",
+  "displayName": "AIInterviewPrepChat",
+  "description": "Practice AI-assisted coding interviews in VS Code with a local, guarded AI assistant powered by Ollama. Your code never leaves your machine.",
+  "version": "0.1.0",
+  "publisher": "samthemogul",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e2430",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mubbyCoders/ai-interview-prep-chat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mubbyCoders/ai-interview-prep-chat/issues"
+  },
+  "homepage": "https://github.com/mubbyCoders/ai-interview-prep-chat#readme",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Education",
+    "Other"
+  ],
+  "keywords": [
+    "interview",
+    "interview prep",
+    "coding interview",
+    "ollama",
+    "local ai",
+    "llm",
+    "offline",
+    "privacy",
+    "guarded mode",
+    "practice"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiInterviewPrepChat",
+          "title": "AIInterviewPrepChat",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiInterviewPrepChat": [
+        {
+          "type": "webview",
+          "id": "aiInterviewPrepChat.chat",
+          "name": "Chat",
+          "icon": "media/activity.svg",
+          "contextualTitle": "AIInterviewPrepChat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "aiInterviewPrepChat.openChat",
+        "title": "Open Chat",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "aiInterviewPrepChat.newConversation",
+        "title": "New Conversation",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "aiInterviewPrepChat.clearConversation",
+        "title": "Clear Conversation",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "aiInterviewPrepChat.explainSelection",
+        "title": "Explain Selection",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.askAboutSelection",
+        "title": "Ask About Selection",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.findPotentialIssues",
+        "title": "Find Potential Issues",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.askGuidingQuestions",
+        "title": "Ask Guiding Questions",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.explainCurrentFile",
+        "title": "Explain Current File",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.explainFile",
+        "title": "Explain File",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.askAboutFile",
+        "title": "Ask About File",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.askAboutWorkspace",
+        "title": "Ask About Workspace",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.toggleInterviewMode",
+        "title": "Toggle Interview Mode",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "aiInterviewPrepChat.selectModel",
+        "title": "Select Model",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.downloadModel",
+        "title": "Download a Model…",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.checkOllama",
+        "title": "Check Ollama",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.openSettings",
+        "title": "Open Settings",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "aiInterviewPrepChat.reviewTranscript",
+        "title": "Review Session Transcript",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.exportTranscript",
+        "title": "Export Transcript",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.deleteTranscripts",
+        "title": "Delete Transcripts",
+        "category": "AIInterviewPrepChat"
+      },
+      {
+        "command": "aiInterviewPrepChat.viewLogs",
+        "title": "View Logs",
+        "category": "AIInterviewPrepChat"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "aiInterviewPrepChat.editorContext",
+        "label": "AIInterviewPrepChat"
+      },
+      {
+        "id": "aiInterviewPrepChat.explorerContext",
+        "label": "AIInterviewPrepChat"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "submenu": "aiInterviewPrepChat.editorContext",
+          "group": "navigation@90",
+          "when": "editorHasSelection"
+        }
+      ],
+      "aiInterviewPrepChat.editorContext": [
+        {
+          "command": "aiInterviewPrepChat.explainSelection",
+          "group": "1_ask@1"
+        },
+        {
+          "command": "aiInterviewPrepChat.askAboutSelection",
+          "group": "1_ask@2"
+        },
+        {
+          "command": "aiInterviewPrepChat.findPotentialIssues",
+          "group": "1_ask@3",
+          "when": "config.aiInterviewPrepChat.mode == 'normal'"
+        },
+        {
+          "command": "aiInterviewPrepChat.askGuidingQuestions",
+          "group": "1_ask@3",
+          "when": "config.aiInterviewPrepChat.mode != 'normal'"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "aiInterviewPrepChat.explorerContext",
+          "group": "navigation@90",
+          "when": "!explorerResourceIsFolder"
+        }
+      ],
+      "aiInterviewPrepChat.explorerContext": [
+        {
+          "command": "aiInterviewPrepChat.explainFile",
+          "group": "1_ask@1"
+        },
+        {
+          "command": "aiInterviewPrepChat.askAboutFile",
+          "group": "1_ask@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "aiInterviewPrepChat.newConversation",
+          "when": "view == aiInterviewPrepChat.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "aiInterviewPrepChat.openSettings",
+          "when": "view == aiInterviewPrepChat.chat",
+          "group": "navigation@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "aiInterviewPrepChat.explainFile",
+          "when": "false"
+        },
+        {
+          "command": "aiInterviewPrepChat.askAboutFile",
+          "when": "false"
+        },
+        {
+          "command": "aiInterviewPrepChat.findPotentialIssues",
+          "when": "config.aiInterviewPrepChat.mode == 'normal'"
+        },
+        {
+          "command": "aiInterviewPrepChat.askGuidingQuestions",
+          "when": "config.aiInterviewPrepChat.mode != 'normal'"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AIInterviewPrepChat",
+      "properties": {
+        "aiInterviewPrepChat.ollamaEndpoint": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "markdownDescription": "URL of your local Ollama server. Keep this on your own machine to keep your code local.",
+          "order": 1
+        },
+        "aiInterviewPrepChat.model": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Name of the installed Ollama model to use (for example `qwen2.5-coder:7b`). Leave empty to pick from the chat header.",
+          "order": 2
+        },
+        "aiInterviewPrepChat.mode": {
+          "type": "string",
+          "enum": [
+            "guarded",
+            "normal"
+          ],
+          "enumDescriptions": [
+            "Guarded Interview Mode: the AI helps you reason and navigate but does not solve the task for you.",
+            "Normal Mode: the AI behaves like an ordinary coding assistant."
+          ],
+          "default": "guarded",
+          "markdownDescription": "Assistant mode. Guarded Interview Mode is the default practice experience.",
+          "order": 3
+        },
+        "aiInterviewPrepChat.maxContextFiles": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 20,
+          "markdownDescription": "Maximum number of repository files retrieved automatically for each question.",
+          "order": 4
+        },
+        "aiInterviewPrepChat.maxContextCharacters": {
+          "type": "integer",
+          "default": 12000,
+          "minimum": 1000,
+          "maximum": 200000,
+          "markdownDescription": "Maximum number of characters of repository context sent to the model per message.",
+          "order": 5
+        },
+        "aiInterviewPrepChat.contextWindow": {
+          "type": "integer",
+          "default": 8192,
+          "minimum": 2048,
+          "maximum": 131072,
+          "markdownDescription": "Context window (in tokens) requested from Ollama (`num_ctx`). Larger values use more memory.",
+          "order": 6
+        },
+        "aiInterviewPrepChat.autoIncludeCurrentFile": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Include the active editor's file with every message. Off by default; use the **Current file** chip instead.",
+          "order": 7
+        },
+        "aiInterviewPrepChat.includeDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Automatically include errors and warnings for the active file with every message. You can always use `@diagnostics` instead.",
+          "order": 8
+        },
+        "aiInterviewPrepChat.temperature": {
+          "type": "number",
+          "default": 0.2,
+          "minimum": 0,
+          "maximum": 2,
+          "markdownDescription": "Sampling temperature. Lower values give more focused answers.",
+          "order": 9
+        },
+        "aiInterviewPrepChat.saveTranscripts": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Record Guarded Interview Mode sessions to a local transcript you can review. Stored only in VS Code's extension storage on this machine.",
+          "order": 10
+        },
+        "aiInterviewPrepChat.debugLogging": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Write detailed debug information to the AIInterviewPrepChat output channel. Source code is never written to the log.",
+          "order": 11
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package:prod": "node esbuild.mjs --production",
+    "typecheck": "tsc -p . --noEmit && tsc -p src/webview --noEmit",
+    "lint": "eslint src test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "vscode:prepublish": "npm run package:prod",
+    "vsix": "vsce package --no-dependencies",
+    "publish:marketplace": "vsce publish --no-dependencies"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.19.0",
+    "@types/vscode": "1.90.0",
+    "@vscode/codicons": "0.0.36",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^10.11.0",
+    "globals": "^16.0.0",
+    "prettier": "^3.6.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.0"
+  }
+}
