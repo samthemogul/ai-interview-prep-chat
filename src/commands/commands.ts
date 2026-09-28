@@ -6,7 +6,12 @@ import type { WorkspaceIndexer } from '../context/WorkspaceIndexer';
 import type { TranscriptStore } from '../interview/TranscriptStore';
 import type { TranscriptSession } from '../interview/Transcript';
 import { renderTranscriptMarkdown, summarize } from '../interview/Transcript';
-import { MODE_LABELS } from '../interview/InterviewMode';
+import {
+  CHAT_MODE_DESCRIPTIONS,
+  CHAT_MODE_LABELS,
+  CHAT_MODES,
+  MODE_LABELS,
+} from '../interview/InterviewMode';
 import { isValidModelName, SUGGESTED_MODELS, formatBytes } from '../ollama/OllamaModels';
 import { OllamaClient } from '../ollama/OllamaClient';
 import { normalizeEndpoint } from '../settings/settings';
@@ -139,6 +144,19 @@ export function registerCommands(d: CommandDeps): void {
     if (rel) await provider.prefill(`${fileRef(rel)} `);
   });
   reg(COMMANDS.askAboutWorkspace, () => provider.prefill('@workspace '));
+
+  reg(COMMANDS.switchChatMode, async () => {
+    const pick = await vscode.window.showQuickPick(
+      CHAT_MODES.map((m) => ({
+        label: `${m === 'ask' ? '$(comment)' : m === 'plan' ? '$(checklist)' : '$(tools)'} ${CHAT_MODE_LABELS[m]}`,
+        description: m === controller.currentChatMode ? 'current' : undefined,
+        detail: CHAT_MODE_DESCRIPTIONS[m],
+        mode: m,
+      })),
+      { title: `${EXTENSION_DISPLAY_NAME}: Chat Mode` },
+    );
+    if (pick) await controller.setChatMode(pick.mode);
+  });
 
   reg(COMMANDS.toggleInterviewMode, async () => {
     const changed = await controller.toggleMode();

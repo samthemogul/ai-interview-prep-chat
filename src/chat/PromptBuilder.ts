@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../ollama/OllamaClient';
 import type { ContextItem } from '../context/FileContext';
-import type { InterviewMode } from '../interview/InterviewMode';
+import type { ChatMode, InterviewMode } from '../interview/InterviewMode';
 import { systemPromptFor } from '../interview/GuardedPrompt';
 
 export const MAX_HISTORY_MESSAGES = 12;
@@ -8,6 +8,7 @@ export const MAX_HISTORY_CHARS = 16000;
 
 export interface PromptInput {
   mode: InterviewMode;
+  chatMode?: ChatMode;
   /** Previous turns, oldest first, without context blocks. */
   history: ChatMessage[];
   userText: string;
@@ -73,7 +74,7 @@ export function trimHistory(history: ChatMessage[]): ChatMessage[] {
 
 export function buildMessages(input: PromptInput): ChatMessage[] {
   const messages: ChatMessage[] = [
-    { role: 'system', content: input.systemPrompt ?? systemPromptFor(input.mode) },
+    { role: 'system', content: input.systemPrompt ?? systemPromptFor(input.mode, input.chatMode ?? 'ask') },
     ...trimHistory(input.history),
   ];
   if (input.turnNote) messages.push({ role: 'system', content: input.turnNote });

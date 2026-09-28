@@ -23,6 +23,10 @@ export interface ChatRequest {
   messages: ChatMessage[];
   temperature: number;
   contextWindow: number;
+  /** Maximum tokens to generate (Ollama `num_predict`). */
+  maxTokens?: number;
+  /** Called with Ollama's `done_reason` ("stop", "length", …) when generation finishes. */
+  onDone?: (doneReason: string | undefined) => void;
 }
 
 export type ConnectionStatus =
@@ -112,7 +116,11 @@ export class OllamaClient {
           model: req.model,
           messages: req.messages,
           stream: true,
-          options: { temperature: req.temperature, num_ctx: req.contextWindow },
+          options: {
+            temperature: req.temperature,
+            num_ctx: req.contextWindow,
+            ...(req.maxTokens ? { num_predict: req.maxTokens } : {}),
+          },
         }),
         signal: linkSignals([signal, firstByte.signal]),
       });
@@ -145,7 +153,10 @@ export class OllamaClient {
         if (message && typeof message.content === 'string' && message.content.length > 0) {
           yield message.content;
         }
-        if (obj.done === true) return;
+        if (obj.done === true) {
+          req.onDone?.(typeof obj.done_reason === 'string' ? obj.done_reason : undefined);
+          return;
+        }
       }
     } catch (err) {
       if (signal.aborted) throw abortError();

@@ -1,8 +1,8 @@
 {
   "name": "ai-interview-prep-chat",
   "displayName": "AIInterviewPrepChat",
-  "description": "Practice AI-assisted coding interviews in VS Code with a local, guarded AI assistant powered by Ollama. Your code never leaves your machine.",
-  "version": "0.1.1",
+  "description": "Practise AI-assisted coding interviews in VS Code with a local AI powered by Ollama: guarded or unguarded, with Ask, Plan and Agent modes. Your code never leaves your machine.",
+  "version": "0.2.0",
   "publisher": "samthemogul",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -38,7 +38,9 @@
     "offline",
     "privacy",
     "guarded mode",
-    "practice"
+    "practice",
+    "agent",
+    "plan mode"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [],
@@ -124,9 +126,15 @@
       },
       {
         "command": "aiInterviewPrepChat.toggleInterviewMode",
-        "title": "Toggle Interview Mode",
+        "title": "Toggle Interview Mode (Guarded / Unguarded)",
         "category": "AIInterviewPrepChat",
         "icon": "$(shield)"
+      },
+      {
+        "command": "aiInterviewPrepChat.switchChatMode",
+        "title": "Switch Chat Mode (Ask / Plan / Agent)",
+        "category": "AIInterviewPrepChat",
+        "icon": "$(tools)"
       },
       {
         "command": "aiInterviewPrepChat.selectModel",
@@ -279,10 +287,26 @@
           ],
           "enumDescriptions": [
             "Guarded Interview Mode: the AI helps you reason and navigate but does not solve the task for you.",
-            "Normal Mode: the AI behaves like an ordinary coding assistant."
+            "Unguarded Mode: the AI behaves like an ordinary coding assistant and can solve the task, like the unguarded Code Repos assistant in real assessments."
           ],
           "default": "guarded",
-          "markdownDescription": "Assistant mode. Guarded Interview Mode is the default practice experience.",
+          "markdownDescription": "Interview guard. Guarded Interview Mode is the default practice experience; `normal` is shown as **Unguarded** in the chat.",
+          "order": 3
+        },
+        "aiInterviewPrepChat.chatMode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "plan",
+            "agent"
+          ],
+          "enumDescriptions": [
+            "Ask: questions and answers in the chat. The AI never touches your files.",
+            "Plan: build and refine an implementation plan before writing code.",
+            "Agent: the AI proposes file edits that you review as a diff and accept or reject."
+          ],
+          "default": "ask",
+          "markdownDescription": "How the chat works. In Guarded Interview Mode, Agent only edits files to implement approaches you describe.",
           "order": 3
         },
         "aiInterviewPrepChat.maxContextFiles": {

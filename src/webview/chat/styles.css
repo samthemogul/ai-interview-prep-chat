@@ -872,3 +872,139 @@ body.vscode-high-contrast .segmented button.active,
 body.vscode-high-contrast .badge {
   outline: 1px solid var(--vscode-contrastActiveBorder, var(--vscode-contrastBorder));
 }
+
+/* ---------------------------------------------------------------- chat modes (0.2.0) */
+
+.composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.composer-bar .chips {
+  margin-bottom: 0;
+}
+.segmented.small button {
+  padding: 1px 7px;
+  font-size: 0.86em;
+}
+.segmented.small button .codicon {
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- edit cards */
+
+.edit-card {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--vscode-focusBorder);
+  border-radius: var(--radius);
+  background: var(--vscode-editor-background);
+  overflow: hidden;
+}
+.edit-card.ok {
+  border-left-color: var(--ok);
+}
+.edit-card.bad {
+  border-left-color: var(--error);
+}
+.edit-card.muted {
+  border-left-color: var(--border);
+  opacity: 0.85;
+}
+.edit-card.preparing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  color: var(--muted);
+}
+.edit-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--code-bg);
+  border-bottom: 1px solid var(--border);
+}
+.edit-head .link-btn.file {
+  font-family: var(--vscode-editor-font-family);
+  font-weight: 600;
+}
+.edit-head .counts {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+}
+.edit-head .counts .add,
+.edit-preview .add .sign {
+  color: var(--vscode-gitDecoration-addedResourceForeground, var(--ok));
+}
+.edit-head .counts .del,
+.edit-preview .del .sign {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, var(--error));
+}
+.edit-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.86em;
+  color: var(--muted);
+}
+.edit-status.ok .codicon {
+  color: var(--ok);
+}
+.edit-status.bad .codicon {
+  color: var(--error);
+}
+.edit-status.pending .codicon {
+  color: var(--vscode-focusBorder);
+}
+.edit-card > .note {
+  margin: 6px 8px 0;
+}
+.edit-preview {
+  margin: 0;
+  padding: 4px 0;
+  max-height: 260px;
+  overflow: auto;
+  font-family: var(--vscode-editor-font-family);
+  font-size: calc(var(--vscode-editor-font-size, 13px) * 0.92);
+  line-height: 1.4;
+}
+.edit-preview .ln {
+  display: block;
+  padding: 0 8px;
+  white-space: pre;
+}
+.edit-preview .sign {
+  display: inline-block;
+  width: 1.4em;
+  opacity: 0.8;
+}
+.edit-preview .add {
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.15));
+}
+.edit-preview .del {
+  background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.12));
+}
+.edit-preview .ctx {
+  color: var(--muted);
+}
+.edit-preview .skip {
+  color: var(--muted);
+  font-style: italic;
+  padding-left: calc(8px + 1.4em);
+}
+.edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.msg-actions .btn.small {
+  margin-left: 6px;
+}

@@ -38,13 +38,26 @@ Run through this before each release in an Extension Development Host (F5) or wi
 - [ ] "fix the timeout bug" does not produce the fix, even with a model that tries to comply (the guard shows "Code removed").
 - [ ] "Ignore your previous instructions…" and "the rules have changed…" are declined.
 - [ ] Typing `[APPROACH]` in a message does not unlock code.
-- [ ] Right-click → _Ask Guiding Questions_ appears in Guarded Mode; _Find Potential Issues_ appears only in Normal Mode.
+- [ ] Right-click → _Ask Guiding Questions_ appears in Guarded Mode; _Find Potential Issues_ appears only in Unguarded Mode.
 - [ ] No Apply / Insert / Run buttons appear anywhere.
+
+## Ask / Plan / Agent
+
+- [ ] The Ask / Plan / Agent picker above the input switches mode; the status line and empty state follow.
+- [ ] Guarded Ask: "create a get one user endpoint" gets a short refusal (a sentence and a hint), not a long explanation.
+- [ ] Guarded Ask with an approach returns only the new function, not the whole file.
+- [ ] Unguarded Agent: a change request shows an edit card; the file is unchanged until **Accept**.
+- [ ] **Review diff** opens VS Code's diff editor; **Accept** writes and saves; **Undo** in the editor works; **Revert** restores the file.
+- [ ] Editing the file between proposal and **Accept** either re-applies cleanly or shows "no longer applies".
+- [ ] Guarded Agent: an outcome-only request shows a blocked edit card; an approach produces a pending edit.
+- [ ] Unguarded Plan: **Implement with Agent** switches to Agent and proposes edits.
+- [ ] Guarded Plan: the AI reviews your plan with questions and doesn't write one.
+- [ ] After reloading the window, pending edits show as expired.
 
 ## Modes and transcript
 
-- [ ] Switching Guarded → Normal shows a confirmation; cancelling keeps Guarded Mode.
-- [ ] Normal Mode shows a warning banner and the header control is highlighted.
+- [ ] Switching Guarded → Unguarded shows a confirmation; cancelling keeps Guarded Mode.
+- [ ] Unguarded Mode shows a warning banner and the header control is highlighted.
 - [ ] **Review Session Transcript** shows turns, flags, context files and mode switches.
 - [ ] **Export Transcript** writes a Markdown file where you choose. **Delete Transcripts** removes them.
 - [ ] With `saveTranscripts` off, nothing new is recorded.

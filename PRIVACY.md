@@ -17,7 +17,8 @@
 - No telemetry, analytics, crash reporting or usage tracking.
 - No accounts, sign-in or API keys.
 - No requests to any server other than your configured Ollama endpoint.
-- No reading of files outside the open workspace.
+- No reading or writing of files outside the open workspace.
+- No changes to your files unless you click **Accept** on an edit proposed in Agent mode.
 - No uploading of source code, chat messages, repository contents or personal information.
 
 ## Remote endpoints

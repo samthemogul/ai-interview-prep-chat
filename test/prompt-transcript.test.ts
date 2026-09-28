@@ -188,12 +188,12 @@ describe('practice transcript', () => {
       turns: 2,
       guardedTurns: 1,
       unguardedTurns: 1,
-      flaggedTurns: 2,
+      flaggedTurns: 1,
       modeSwitches: 1,
     });
     const md = renderTranscriptMarkdown(s);
-    expect(md).toContain('| Flagged turns | 2 |');
-    expect(md).toContain('Switched from Guarded Interview Mode to Normal Mode');
+    expect(md).toContain('| Flagged turns | 1 |');
+    expect(md).toContain('Switched from Guarded Interview Mode to Unguarded Mode');
     expect(md).toContain('> fix the timeout bug');
     expect(md).toContain('`src/db/pool.ts`');
   });

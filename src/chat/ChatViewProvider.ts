@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import type { ChatController } from './ChatController';
-import type { Chips, HostToWebview, Mode, WebviewToHost } from './protocol';
+import type { ChatMode, Chips, HostToWebview, Mode, WebviewToHost } from './protocol';
 import type { VscodeHost } from '../host/VscodeHost';
 import type { WorkspaceIndexer } from '../context/WorkspaceIndexer';
 import {
@@ -162,6 +162,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         case 'setMode':
           if (isMode(m.mode)) await this.controller.setMode(m.mode);
           break;
+        case 'setChatMode':
+          if (isChatMode(m.chatMode)) await this.controller.setChatMode(m.chatMode);
+          break;
+        case 'editAction':
+          if (
+            typeof m.messageId === 'string' &&
+            typeof m.editId === 'string' &&
+            (m.action === 'diff' || m.action === 'accept' || m.action === 'reject' || m.action === 'revert')
+          ) {
+            await this.controller.editAction(m.messageId, m.editId, m.action);
+          }
+          break;
+        case 'implementPlan':
+          await this.controller.implementPlan();
+          break;
         case 'setChip':
           if (CHIP_KEYS.includes(m.chip)) this.controller.setChip(m.chip, m.value === true);
           break;
@@ -248,6 +263,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 </body>
 </html>`;
   }
+}
+
+function isChatMode(v: unknown): v is ChatMode {
+  return v === 'ask' || v === 'plan' || v === 'agent';
 }
 
 function isMode(v: unknown): v is Mode {

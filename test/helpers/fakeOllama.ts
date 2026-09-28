@@ -13,6 +13,8 @@ export interface FakeOllamaOptions {
   chatErrorBody?: string;
   /** A JSON error object emitted mid-stream after N chunks. */
   streamErrorAfter?: { chunks: number; error: string };
+  /** Ollama's done_reason on the final line; defaults to "length" when num_predict cut the reply. */
+  doneReason?: string;
 }
 
 export interface FakeOllama {
@@ -119,7 +121,14 @@ export function createFakeOllama(initial: FakeOllamaOptions = {}): FakeOllama {
         }
         lines.push({ model: body.model, message: { role: 'assistant', content: c }, done: false });
       });
-      lines.push({ model: body.model, message: { role: 'assistant', content: '' }, done: true });
+      const limit = typeof body.options?.num_predict === 'number' ? body.options.num_predict : undefined;
+      const reason = opts.doneReason ?? (limit && chunks.join('').length > limit ? 'length' : 'stop');
+      lines.push({
+        model: body.model,
+        message: { role: 'assistant', content: '' },
+        done: true,
+        done_reason: reason,
+      });
       return new Response(ndjsonStream(lines, opts.chunkDelayMs ?? 0, init?.signal), { status: 200 });
     }
     if (path === '/api/pull') {

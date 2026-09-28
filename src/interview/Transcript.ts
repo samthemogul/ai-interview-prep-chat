@@ -1,5 +1,5 @@
-import type { InterviewMode } from './InterviewMode';
-import { MODE_LABELS } from './InterviewMode';
+import type { ChatMode, InterviewMode } from './InterviewMode';
+import { CHAT_MODE_LABELS, MODE_LABELS } from './InterviewMode';
 import type { Classification } from './RequestClassifier';
 import type { GuardReport, RemovalReason } from './OutputGuard';
 import { EXTENSION_DISPLAY_NAME } from '../constants';
@@ -13,7 +13,8 @@ export type TurnFlag =
   | 'approach-implemented'
   | 'asked-for-decision'
   | 'refused-outcome-request'
-  | 'unguarded';
+  | 'unguarded'
+  | 'edits-proposed';
 
 export const FLAG_LABELS: Record<TurnFlag, string> = {
   'solution-request': 'Asked for code or a solution',
@@ -24,7 +25,8 @@ export const FLAG_LABELS: Record<TurnFlag, string> = {
   'approach-implemented': 'AI implemented the candidate’s approach',
   'asked-for-decision': 'AI asked for a missing design decision',
   'refused-outcome-request': 'AI declined an outcome-only request',
-  unguarded: 'Asked in Normal Mode (unguarded)',
+  unguarded: 'Asked in Unguarded Mode',
+  'edits-proposed': 'AI proposed file edits',
 };
 
 /** Flags a reviewer would read as pushing against the guard. */
@@ -33,7 +35,6 @@ export const NEGATIVE_FLAGS: ReadonlySet<TurnFlag> = new Set<TurnFlag>([
   'task-statement',
   'bypass-attempt',
   'marker-injection',
-  'unguarded',
 ]);
 
 export interface TranscriptTurn {
@@ -48,6 +49,21 @@ export interface TranscriptTurn {
   removed: RemovalReason[];
   stopped?: boolean;
   error?: string;
+  chatMode?: ChatMode;
+  /** Edits the AI proposed in this turn (decisions are separate 'edit' events). */
+  edits?: Array<{ id: string; path: string; added: number; removed: number; status: string }>;
+}
+
+export interface TranscriptEditDecision {
+  type: 'edit';
+  at: string;
+  editId: string;
+  path: string;
+  action: 'accepted' | 'rejected' | 'reverted';
+  /** Whether the candidate opened the diff before deciding. */
+  reviewed: boolean;
+  added: number;
+  removed: number;
 }
 
 export interface TranscriptModeSwitch {
@@ -57,7 +73,7 @@ export interface TranscriptModeSwitch {
   to: InterviewMode;
 }
 
-export type TranscriptEvent = TranscriptTurn | TranscriptModeSwitch;
+export type TranscriptEvent = TranscriptTurn | TranscriptModeSwitch | TranscriptEditDecision;
 
 export interface TranscriptSession {
   version: 1;
@@ -84,8 +100,8 @@ export function deriveFlags(
   if (c.markerStripped) flags.add('marker-injection');
   if (c.bypassAttempt) flags.add('bypass-attempt');
   if (c.looksLikeTaskStatement) flags.add('task-statement');
-  if (c.likelySolutionRequest && !guard.approach && !c.describesApproach) flags.add('solution-request');
   if (mode === 'guarded') {
+    if (c.likelySolutionRequest && !guard.approach && !c.describesApproach) flags.add('solution-request');
     if (guard.removed.length) flags.add('guard-removed-code');
     if (guard.approach) flags.add('approach-implemented');
     const hasCode = /```|~~~/.test(response);
@@ -108,6 +124,11 @@ export interface TranscriptSummary {
   approachTurns: number;
   guardRemovals: number;
   modeSwitches: number;
+  editsProposed: number;
+  editsAccepted: number;
+  editsRejected: number;
+  /** Accepted edits whose diff was never opened: a reviewer would notice this. */
+  acceptedWithoutReview: number;
   flagCounts: Partial<Record<TurnFlag, number>>;
 }
 
@@ -120,6 +141,10 @@ export function summarize(session: TranscriptSession): TranscriptSummary {
     approachTurns: 0,
     guardRemovals: 0,
     modeSwitches: 0,
+    editsProposed: 0,
+    editsAccepted: 0,
+    editsRejected: 0,
+    acceptedWithoutReview: 0,
     flagCounts: {},
   };
   for (const e of session.events) {
@@ -127,6 +152,16 @@ export function summarize(session: TranscriptSession): TranscriptSummary {
       s.modeSwitches++;
       continue;
     }
+    if (e.type === 'edit') {
+      if (e.action === 'accepted') {
+        s.editsAccepted++;
+        if (!e.reviewed) s.acceptedWithoutReview++;
+      } else if (e.action === 'rejected') {
+        s.editsRejected++;
+      }
+      continue;
+    }
+    s.editsProposed += e.edits?.filter((x) => x.status !== 'failed').length ?? 0;
     s.turns++;
     if (e.mode === 'guarded') s.guardedTurns++;
     else s.unguardedTurns++;
@@ -164,6 +199,12 @@ export function renderTranscriptMarkdown(session: TranscriptSession): string {
   out.push(`| Approaches implemented | ${s.approachTurns} |`);
   out.push(`| Code removed by the guard | ${s.guardRemovals} |`);
   out.push(`| Mode switches | ${s.modeSwitches} |`);
+  if (s.editsProposed || s.editsAccepted) {
+    out.push(
+      `| File edits | ${s.editsProposed} proposed, ${s.editsAccepted} accepted, ${s.editsRejected} rejected |`,
+    );
+    out.push(`| Edits accepted without opening the diff | ${s.acceptedWithoutReview} |`);
+  }
   out.push('');
   const flagEntries = Object.entries(s.flagCounts) as Array<[TurnFlag, number]>;
   if (flagEntries.length) {
@@ -175,7 +216,7 @@ export function renderTranscriptMarkdown(session: TranscriptSession): string {
     out.push('');
   }
   out.push(
-    '_On assessment platforms, reviewers see every prompt and response. Repeated attempts to get the answer directly are a negative signal; describing your own approach is a positive one._',
+    '_On assessment platforms, reviewers see every prompt, response and applied edit. In guarded rounds, repeated attempts to get the answer directly are a negative signal and describing your own approach is a positive one. In unguarded rounds, reviewers look at how well you direct and check the AI: planning first, reviewing diffs and verifying the result._',
   );
   out.push('');
   out.push('## Timeline');
@@ -186,8 +227,19 @@ export function renderTranscriptMarkdown(session: TranscriptSession): string {
       out.push(`**${e.at}** — Switched from ${MODE_LABELS[e.from]} to ${MODE_LABELS[e.to]}.`);
       continue;
     }
+    if (e.type === 'edit') {
+      const verb = e.action === 'accepted' ? 'Accepted' : e.action === 'rejected' ? 'Rejected' : 'Reverted';
+      const review =
+        e.action === 'accepted'
+          ? e.reviewed
+            ? ' after reviewing the diff'
+            : ' ⚠️ without opening the diff'
+          : '';
+      out.push(`**${e.at}** — ${verb} edit to \`${e.path}\` (+${e.added} −${e.removed})${review}.`);
+      continue;
+    }
     n++;
-    out.push(`### Turn ${n} · ${MODE_LABELS[e.mode]} · ${e.at}`);
+    out.push(`### Turn ${n} · ${MODE_LABELS[e.mode]} · ${CHAT_MODE_LABELS[e.chatMode ?? 'ask']} · ${e.at}`);
     if (e.flags.length) {
       out.push('');
       out.push(e.flags.map((f) => `${NEGATIVE_FLAGS.has(f) ? '⚠️' : '•'} ${FLAG_LABELS[f]}`).join('  \n'));
@@ -203,7 +255,13 @@ export function renderTranscriptMarkdown(session: TranscriptSession): string {
     out.push('');
     out.push(`**AI**${e.stopped ? ' (stopped)' : ''}${e.error ? ` (error: ${e.error})` : ''}`);
     out.push('');
-    out.push(e.response.trim() ? e.response.trim() : '_(no response)_');
+    out.push(e.response.trim() ? e.response.trim().replace(/^%%EDIT:[\w-]+%%$/gm, '') : '_(no response)_');
+    if (e.edits?.length) {
+      out.push('');
+      out.push('**Proposed edits**');
+      out.push('');
+      for (const x of e.edits) out.push(`- \`${x.path}\` (+${x.added} −${x.removed}) — ${x.status}`);
+    }
   }
   out.push('');
   return out.join('\n');
