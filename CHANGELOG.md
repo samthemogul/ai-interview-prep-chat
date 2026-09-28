@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-09-28
+
+### Fixed
+
+- **The agent no longer cuts itself off.** 0.2.2 could stop generation once it judged the rest of the answer would be trimmed; when a model wrote a sentence or an explanation *before* its code block, the stream was aborted and the edit never arrived — you'd see one sentence and no diff to review. Generation now always runs to completion, so a code block that comes after prose is delivered in full and shows its diff.
+
+### Changed
+
+- **Short answers now come from the prompt, not from truncation.** The model is asked for one or two sentences of prose around its code; the display no longer caps prose by length or stops the model early. The only cleanup left is removing pure filler ("Let me know if…") and whole labelled "Explanation" / "Summary" / "Testing" sections — it never shortens the actual answer and never touches code or edits.
+
 ## [0.2.2] - 2026-09-28
 
 ### Fixed

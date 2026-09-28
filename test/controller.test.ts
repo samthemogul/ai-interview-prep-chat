@@ -793,15 +793,16 @@ describe('Agent mode: small-model output (0.2.1)', () => {
     expect(after.indexOf('def get_user')).toBeGreaterThan(after.indexOf('def create_user'));
   });
 
-  it('keeps explanations short and stops generating once the rest would be hidden', async () => {
-    const ramble = Array.from({ length: 30 }, (_, i) => `Sentence number ${i} explains more. `);
+  it('never cuts the stream off: code after prose still becomes an edit', async () => {
+    // The model writes prose, then a labelled section, and only THEN the real edit. The old
+    // early-stop could abort before the code arrived; now it always comes through.
+    const ramble = Array.from({ length: 30 }, (_, i) => `Sentence number ${i} explains more.\n`);
     const { host, controller } = setupModes(
       () => [
-        'Added the endpoint.\n\n',
-        'pyserver.py\n```python\n@app.delete("/users/{id}")\ndef delete_user(id: str):\n    users.delete_one({"_id": id})\n```\n\n',
+        'Adding a delete endpoint.\n\n',
         '### Explanation\n',
         ...ramble,
-        '\n\nLet me know if you need anything else!',
+        '\n\npyserver.py\n```python\n@app.delete("/users/{id}")\ndef delete_user(id: str):\n    users.delete_one({"_id": id})\n```\n',
       ],
       { mode: 'normal', chatMode: 'agent' },
     );
@@ -809,19 +810,21 @@ describe('Agent mode: small-model output (0.2.1)', () => {
     await controller.send('add a delete endpoint', NO_CHIPS);
     const msg = host.lastState()!.messages[1]!;
     expect(msg.status).toBe('done');
-    expect(msg.text).toContain('Added the endpoint.');
+    expect(msg.text).toContain('Adding a delete endpoint.');
+    // The labelled section and filler are cleaned up, but the edit survives.
     expect(msg.text).not.toContain('Explanation');
     expect(msg.text).not.toContain('Sentence number');
-    expect(msg.text).not.toContain('Let me know');
-    expect(msg.edits!.filter((e) => !e.hidden)).toHaveLength(1);
+    const visible = msg.edits!.filter((e) => !e.hidden);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]!.added).toBeGreaterThan(1);
   });
 
-  it('caps prose in Ask mode unless the user asks for detail', async () => {
+  it('does not truncate prose by length', async () => {
     const long = 'One. Two. Three. Four. Five. Six. Seven. Eight.';
     const { host, controller } = setupModes(() => [long], { mode: 'normal', chatMode: 'ask' });
     await controller.refreshOllama();
     await controller.send('what does serialize do?', NO_CHIPS);
-    expect(host.lastState()!.messages[1]!.text.trim()).toBe('One. Two. Three. Four. Five.');
+    expect(host.lastState()!.messages[1]!.text.trim()).toBe(long);
     await controller.send('explain in detail what serialize does', NO_CHIPS);
     expect(host.lastState()!.messages[3]!.text.trim()).toBe(long);
   });
