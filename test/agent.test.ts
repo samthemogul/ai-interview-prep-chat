@@ -207,6 +207,29 @@ describe('edit manager', () => {
     expect(host.files['app/pyserver.py']).toBe(PY);
   });
 
+  it('reports failed (not "Applied") when the write silently does not change the file', async () => {
+    const { host, mgr } = make({ 'a.py': 'x = 1\n' });
+    const e = await mgr.propose('m', { path: 'a.py', search: 'x = 1', replace: 'x = 2' });
+    // Simulate a write that resolves but doesn't persist (read-only file, wrong copy, etc.).
+    host.writeFile = async () => {};
+    const r = await mgr.accept(e.id);
+    expect(r!.status).toBe('failed');
+    expect(r!.error).toMatch(/didn't change on disk/);
+    // The card must not claim success.
+    expect(r!.status).not.toBe('accepted');
+  });
+
+  it('accepts when the write persists, ignoring EOL and a trailing newline', async () => {
+    const { host, mgr } = make({ 'a.py': 'x = 1\n' });
+    const e = await mgr.propose('m', { path: 'a.py', search: 'x = 1', replace: 'x = 2' });
+    const orig = host.writeFile.bind(host);
+    // Persist, but hand back CRLF with an extra trailing newline on the next read.
+    host.writeFile = async (pth: string, c: string) => {
+      await orig(pth, c.replace(/\n/g, '\r\n') + '\n');
+    };
+    expect((await mgr.accept(e.id))!.status).toBe('accepted');
+  });
+
   it('re-applies against the current file if it changed, and fails safely if it no longer applies', async () => {
     const { host, mgr } = make({ 'a.py': 'x = 1\ny = 2\n' });
     const e = await mgr.propose('m', { path: 'a.py', search: 'y = 2', replace: 'y = 3' });

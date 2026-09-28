@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.4] - 2026-09-28
+
+### Fixed
+
+- **An accepted edit that doesn't actually reach disk is now reported as failed, not "Applied".** After writing, the extension re-reads the file and checks the change landed; if it didn't (a read-only file, a path that resolved to a different copy than the one on screen, or an editor that rejected the change), the edit card shows a clear error instead of claiming success. This also stops the follow-on confusion where the model, seeing the file unchanged, keeps re-proposing the same endpoint.
+
 ## [0.2.3] - 2026-09-28
 
 ### Fixed
