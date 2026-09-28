@@ -22,6 +22,8 @@ export interface UiEdit {
   error?: string;
   /** Code blocks that changed nothing (e.g. the model echoed existing code) aren't shown. */
   hidden?: boolean;
+  /** Short note about parts of the model's code that were left out. */
+  note?: string;
 }
 
 export type EditAction = 'diff' | 'accept' | 'reject' | 'revert';

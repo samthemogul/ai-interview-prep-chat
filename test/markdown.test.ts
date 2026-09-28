@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileRefFrom, renderMarkdown } from '../src/webview/chat/markdown';
+import { fileRefFrom, renderMarkdown, stablePrefixEnd } from '../src/webview/chat/markdown';
 import { highlight } from '../src/webview/chat/highlight';
 
 describe('markdown rendering', () => {
@@ -78,5 +78,25 @@ describe('markdown rendering', () => {
 
   it('highlights without breaking on unterminated strings', () => {
     expect(highlight('const s = "abc', 'ts')).toContain('tok-string');
+  });
+});
+
+describe('incremental rendering boundaries', () => {
+  const strip = (h: string) => h.replace(/cb\d+/g, 'cb');
+
+  it('renders a prefix plus tail the same as the whole text', () => {
+    const text =
+      'Intro paragraph.\n\n```python\nx = 1\n\ny = 2\n```\n\nMiddle text here.\n\n1. one\n\n2. two\n\nAfter the list.\n\nTail being wri';
+    const end = stablePrefixEnd(text);
+    expect(end).toBeGreaterThan(0);
+    const split = renderMarkdown(text.slice(0, end)) + renderMarkdown(text.slice(end));
+    expect(strip(split).replace(/\n/g, '')).toBe(strip(renderMarkdown(text)).replace(/\n/g, ''));
+  });
+
+  it('never splits inside a code block or a list', () => {
+    const inCode = 'Hi.\n\n```js\nconst a = 1;\n\nconst b = 2;\n';
+    expect(inCode.slice(0, stablePrefixEnd(inCode))).toBe('Hi.\n');
+    const list = '1. one\n\n2. two\n\n3. thr';
+    expect(stablePrefixEnd(list)).toBe(0);
   });
 });

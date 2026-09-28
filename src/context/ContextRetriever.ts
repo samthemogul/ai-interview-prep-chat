@@ -190,6 +190,8 @@ export function extractSnippets(
   return out;
 }
 
+const READ_BATCH = 16;
+
 /** Retrieves the most relevant snippets for a question without reading the whole repo. */
 export class ContextRetriever {
   constructor(private readonly source: WorkspaceSource) {}
@@ -209,18 +211,19 @@ export class ContextRetriever {
       if (s + b > 0) scores.set(f.relPath, s + b);
     }
 
-    if (this.source.findSymbolFiles && terms.length) {
-      try {
-        const symbolFiles = await this.source.findSymbolFiles(terms.slice(0, 3).join(' '), opts.signal);
-        for (const p of symbolFiles) {
-          if (!exclude.has(p)) scores.set(p, (scores.get(p) ?? 0) + 4);
-        }
-      } catch {
-        // Symbol providers are optional; ignore failures.
+    // The language-server symbol lookup can take a moment; run it alongside the content search.
+    const symbols =
+      this.source.findSymbolFiles && terms.length
+        ? this.source.findSymbolFiles(terms.slice(0, 3).join(' '), opts.signal).catch(() => [] as string[])
+        : Promise.resolve([] as string[]);
+    const addSymbolScores = async () => {
+      for (const p of await symbols) {
+        if (!exclude.has(p)) scores.set(p, (scores.get(p) ?? 0) + 4);
       }
-    }
+    };
 
     if (terms.length === 0) {
+      await addSymbolScores();
       return this.snippetsFor(
         [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, opts.maxFiles),
         terms,
@@ -239,9 +242,15 @@ export class ContextRetriever {
 
     const docFreq = new Map<string, number>();
     const hits = new Map<string, Map<string, number>>();
+    // Read files in parallel batches rather than one after another.
+    const texts = new Map<string, string | undefined>();
+    for (let k = 0; k < searchSet.length && !opts.signal?.aborted; k += READ_BATCH) {
+      const batch = searchSet.slice(k, k + READ_BATCH);
+      const read = await Promise.all(batch.map((p) => this.source.readFile(p).catch(() => undefined)));
+      batch.forEach((p, idx) => texts.set(p, read[idx]));
+    }
     for (const relPath of searchSet) {
-      if (opts.signal?.aborted) break;
-      const text = await this.source.readFile(relPath);
+      const text = texts.get(relPath);
       if (!text) continue;
       const lower = text.toLowerCase();
       const perTerm = new Map<string, number>();
@@ -255,6 +264,7 @@ export class ContextRetriever {
       if (perTerm.size) hits.set(relPath, perTerm);
     }
 
+    await addSymbolScores();
     const n = Math.max(1, searchSet.length);
     for (const [relPath, perTerm] of hits) {
       let content = 0;

@@ -23,11 +23,15 @@ export interface EditInfo {
   error?: string;
   /** True for code blocks that turned out to change nothing; the UI doesn't show them. */
   hidden?: boolean;
+  /** Short note about parts of the model's code that were left out. */
+  note?: string;
 }
 
 /** Applies either a SEARCH/REPLACE edit or a plain code block to a file's content. */
 export function applyRawEdit(original: string | undefined, raw: RawEdit): ApplyResult {
-  if (raw.code !== undefined) return applyBlock(original, raw.code);
+  if (raw.code !== undefined) {
+    return applyBlock(original, raw.code, { request: raw.request, keepComments: raw.keepComments });
+  }
   const strip = (t: string) => stripLineNumberPrefixes(t.split('\n')).join('\n');
   return applySearchReplace(original, strip(raw.search), strip(raw.replace));
 }
@@ -181,6 +185,7 @@ export class EditManager {
     base.added = summary.added;
     base.removed = summary.removed;
     base.preview = summary.preview;
+    base.note = result.note;
     if (base.added === 0 && base.removed === 0) return fail('This edit would not change the file.');
     base.status = 'pending';
     base.error = undefined;
@@ -283,6 +288,7 @@ export class EditManager {
       diffOpened: e.diffOpened,
       error: e.error,
       hidden: e.hidden || undefined,
+      note: e.note,
     };
   }
 }

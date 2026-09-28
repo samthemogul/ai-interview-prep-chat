@@ -69,8 +69,11 @@ In Agent mode the model proposes changes, either as a code block with the new or
 - nothing is written until you accept. If the file changed in the meantime, the edit is re-applied to the current content, or refused if it no longer fits
 - edits can't touch files outside the workspace, `.git`, dependency or build folders, or binaries
 - the AI can't run commands or tests; it tells you what to run
-- you get what you asked for: test code is left out unless you ask for tests, and code the model merely repeats isn't shown as a change
+- **only the affected part changes.** If the model repeats the whole file with one function added, the extension applies only what's new — it inserts the new function, skips the unchanged ones, and merges only the imports the new code uses. Incidental rewrites of code you didn't ask about are left alone, with a note
+- you get what you asked for: test code is left out unless you ask for tests, code the model merely repeats isn't shown as a change, and comments the model adds are dropped unless you ask for them
 - a partial snippet can never overwrite a whole function or class
+
+Answers are **short by default** — a few sentences at most, no "Explanation" or "Summary" sections, no filler — while code and edits always come through in full. Ask for detail ("explain in detail", "step by step") to get a longer answer.
 
 In Unguarded Plan mode, **Implement with Agent** under a plan switches to Agent mode and implements it.
 

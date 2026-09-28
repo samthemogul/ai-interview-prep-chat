@@ -231,3 +231,44 @@ export function renderMarkdown(src: string, _opts: RenderOptions = {}): string {
   flushPara();
   return out.join('\n');
 }
+
+const LIST_LINE = /^\s*(?:[-*+]|\d{1,3}[.)])\s|^\s{2,}\S/;
+
+/**
+ * End of the longest prefix of `text` that can be rendered on its own: it ends at a blank
+ * line outside code blocks, and isn't in the middle of a list (splitting a list would
+ * restart its numbering).
+ */
+export function stablePrefixEnd(text: string): number {
+  const lines = text.split('\n');
+  let inFence = false;
+  let fence = '';
+  let offset = 0;
+  let best = 0;
+  let prevNonBlank = '';
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i]!;
+    const start = offset;
+    offset += line.length + 1;
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (f) {
+      if (!inFence) {
+        inFence = true;
+        fence = f[1]!;
+      } else if (f[1]![0] === fence[0] && f[1]!.length >= fence.length && !line.trim().slice(f[1]!.length)) {
+        inFence = false;
+      }
+    }
+    if (inFence) continue;
+    if (line.trim()) {
+      prevNonBlank = line;
+      continue;
+    }
+    // A blank line: a boundary if the next line is complete and neither side is a list.
+    const next = lines.slice(i + 1, -1).find((l) => l.trim());
+    if (next === undefined || LIST_LINE.test(next) || LIST_LINE.test(prevNonBlank)) continue;
+    if (/^\s*\|/.test(next) || /^\s{0,3}>/.test(next)) continue;
+    best = start;
+  }
+  return best;
+}

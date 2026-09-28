@@ -33,6 +33,7 @@ import { parseReferences } from '../context/References';
 import type { GuardReport } from '../interview/OutputGuard';
 import { OutputGuard, stripLineNumbers } from '../interview/OutputGuard';
 import {
+  asksForComments,
   asksForTests,
   classifyRequest,
   isChangeRequest,
@@ -40,6 +41,7 @@ import {
   looksLikeTestCode,
   turnReminder,
 } from '../interview/RequestClassifier';
+import { PROSE_BUDGET, ProseLimiter, wantsDetail } from '../interview/Brevity';
 import { shortenRefusal } from '../interview/Refusal';
 import { requiresConfirmation, otherMode, MODE_LABELS } from '../interview/InterviewMode';
 import type { TranscriptSession } from '../interview/Transcript';
@@ -109,6 +111,9 @@ const NO_EDIT_HOST: EditHost = {
  * It never runs commands. In Agent mode it only changes files through the EditManager,
  * and only after the user accepts a proposed edit.
  */
+/** How often streamed text is sent to the view. */
+const APPEND_INTERVAL_MS = 40;
+
 export class ChatController {
   private readonly host: ChatHost;
   private readonly state: ChatState;
@@ -117,6 +122,10 @@ export class ChatController {
   private ollamaVersion: string | undefined;
   private models: OllamaModel[] = [];
   private model: string | undefined;
+  private pendingAppend: { id: string; text: string } | undefined;
+  private appendTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Model already loaded in the background, so it is only warmed up once. */
+  private warmedModel: string | undefined;
   private modelMissing = false;
   private mode: Mode;
   private chatMode: ChatMode;
@@ -198,6 +207,7 @@ export class ChatController {
   }
 
   postState(): void {
+    this.flushAppends();
     if (!this.disposed) this.host.post({ type: 'state', state: this.buildViewState() });
   }
 
@@ -239,6 +249,7 @@ export class ChatController {
       this.ollamaVersion = undefined;
       this.models = [];
       this.model = undefined;
+      this.warmedModel = undefined;
       this.deps.logger.info(`Ollama not available at ${endpoint}: ${availability.state}`);
       this.postState();
       this.schedulePoll();
@@ -264,6 +275,14 @@ export class ChatController {
       `Ollama ${availability.version}; ${this.models.length} models; using ${model ?? 'none'}`,
     );
     this.postState();
+    if (model && !missing) this.warmUp(client, model);
+  }
+
+  /** Loads the model in the background so the first answer doesn't wait for it. */
+  private warmUp(client: OllamaClient, model: string): void {
+    if (this.warmedModel === model) return;
+    this.warmedModel = model;
+    void client.warmUp(model);
   }
 
   private schedulePoll(): void {
@@ -290,6 +309,8 @@ export class ChatController {
     this.modelMissing = false;
     await this.host.updateSetting('model', name);
     this.postState();
+    const endpoint = normalizeEndpoint(this.host.getSettings().ollamaEndpoint);
+    if (endpoint) this.warmUp(this.host.createClient(endpoint), name);
     return true;
   }
 
@@ -471,7 +492,14 @@ export class ChatController {
                 return null;
               }
               const id = this.host.newId();
-              queued.push({ id, raw });
+              queued.push({
+                id,
+                raw: {
+                  ...raw,
+                  request: classification.text,
+                  keepComments: asksForComments(classification.text),
+                },
+              });
               return id;
             },
             { captureCodeBlocks },
@@ -481,10 +509,30 @@ export class ChatController {
     let doneReason: string | undefined;
     // Guarded refusals are buffered and reduced to "refusal + one hint" before display.
     let refusalBuffer = '';
+    // Explanations stay short: prose beyond the mode's budget, filler and "Explanation"
+    // sections are dropped (code and edit cards always pass).
+    const limiter = refusal
+      ? undefined
+      : new ProseLimiter({
+          chatMode,
+          budget: wantsDetail(classification.text) ? undefined : PROSE_BUDGET[chatMode],
+        });
     const show = (text: string) => {
       if (!text) return;
       if (refusal) refusalBuffer += text;
-      else this.appendText(assistant.id, text);
+      else {
+        const visible = limiter ? limiter.push(text) : text;
+        if (visible) this.appendText(assistant.id, visible);
+      }
+    };
+    // Everything still to come would be hidden, so stop generating (saves local-model time).
+    // Only once the model is rambling after its code, never before a code block that may follow.
+    const canStopEarly = () => {
+      if (!limiter || limiter.insideCode) return false;
+      if (chatMode === 'agent') {
+        return !!extractor && extractor.idle && extractor.editCount > 0 && limiter.suppressedSinceCode >= 3;
+      }
+      return limiter.exhausted && limiter.suppressedSinceCode >= 5;
     };
     const emit = (raw: string) => {
       const text = extractor ? extractor.push(raw) : raw;
@@ -504,6 +552,8 @@ export class ChatController {
         show(rest ? activeGuard.push(rest) : '');
       }
       show(activeGuard.finish());
+      const tail = limiter?.finish();
+      if (tail) this.appendText(assistant.id, tail);
       if (refusal) {
         this.appendText(assistant.id, shortenRefusal(refusalBuffer));
         refusalBuffer = '';
@@ -620,6 +670,11 @@ export class ChatController {
         signal,
       )) {
         emit(delta);
+        if (canStopEarly()) {
+          this.deps.logger.debug('Stopping early: the rest of the answer would be trimmed.');
+          doneReason = 'trimmed';
+          break;
+        }
       }
       finishStream();
       this.deps.logger.debug(`Generation finished: ${doneReason ?? 'unknown'}`);
@@ -786,12 +841,29 @@ export class ChatController {
     await this.persistTranscript();
   }
 
+  /**
+   * Streams text to the view. Deltas (often a single token) are batched and sent at most
+   * every APPEND_INTERVAL_MS, which keeps the webview from re-rendering on every token.
+   */
   private appendText(id: string, text: string): void {
     this.state.appendText(id, text);
-    this.host.post({ type: 'append', id, text });
+    if (this.pendingAppend && this.pendingAppend.id !== id) this.flushAppends();
+    if (this.pendingAppend) this.pendingAppend.text += text;
+    else this.pendingAppend = { id, text };
+    this.appendTimer ??= setTimeout(() => this.flushAppends(), APPEND_INTERVAL_MS);
+  }
+
+  /** Sends batched text now; called before any other message so ordering is preserved. */
+  private flushAppends(): void {
+    if (this.appendTimer) clearTimeout(this.appendTimer);
+    this.appendTimer = undefined;
+    const pending = this.pendingAppend;
+    this.pendingAppend = undefined;
+    if (pending && !this.disposed) this.host.post({ type: 'append', id: pending.id, text: pending.text });
   }
 
   private postMessage(id: string): void {
+    this.flushAppends();
     const ui = this.state.toUi().find((m) => m.id === id);
     if (ui) this.host.post({ type: 'message', message: ui });
   }
@@ -857,6 +929,7 @@ export class ChatController {
   }
 
   dispose(): void {
+    if (this.appendTimer) clearTimeout(this.appendTimer);
     this.disposed = true;
     this.stop();
     this.stopPolling();

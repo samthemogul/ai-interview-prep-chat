@@ -34,6 +34,10 @@ export interface RawEdit {
   lang?: string;
   /** True when the stream ended before the block was complete. */
   incomplete?: boolean;
+  /** The user's request (set by the controller), used to place code blocks. */
+  request?: string;
+  /** Keep comments the model added to code blocks (the user asked for comments). */
+  keepComments?: boolean;
 }
 
 /** Placeholder line inserted into the message text where an edit card belongs. */
@@ -117,6 +121,11 @@ export class EditBlockExtractor {
 
   get editCount(): number {
     return this.count;
+  }
+
+  /** True when no block is being collected (a stop now would lose nothing). */
+  get idle(): boolean {
+    return this.state === 'text' && this.heldFence === undefined;
   }
 
   push(chunk: string): string {

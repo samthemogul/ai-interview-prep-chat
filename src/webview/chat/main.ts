@@ -9,7 +9,7 @@ import type {
   ViewState,
   WebviewToHost,
 } from '../../chat/protocol';
-import { escapeHtml, renderMarkdown } from './markdown';
+import { escapeHtml, renderMarkdown, stablePrefixEnd } from './markdown';
 
 interface VsCodeApi {
   postMessage(message: WebviewToHost): void;
@@ -363,6 +363,44 @@ function renderMessage(m: UiMessage): string {
   </article>`;
 }
 
+/**
+ * Rendered HTML for text that no longer changes while a message streams, so each frame only
+ * renders the new tail instead of the whole message (which got slow on long answers).
+ */
+const renderCache = new Map<string, { src: string; html: string }>();
+
+function renderSegmentCached(key: string, segment: string): string {
+  const cached = renderCache.get(key);
+  if (cached && cached.src === segment) return cached.html;
+  const html = renderMarkdown(segment);
+  renderCache.set(key, { src: segment, html });
+  return html;
+}
+
+function renderStreamingTail(key: string, segment: string): string {
+  const end = stablePrefixEnd(segment);
+  const stable = segment.slice(0, end);
+  let head = '';
+  if (stable.trim()) {
+    const cached = renderCache.get(key);
+    if (cached && cached.src === stable) {
+      head = cached.html;
+    } else if (cached && stable.startsWith(cached.src)) {
+      // The cached part ended on a boundary too, so the new part renders independently.
+      head = cached.html + renderMarkdown(stable.slice(cached.src.length));
+    } else {
+      head = renderMarkdown(stable);
+    }
+    renderCache.set(key, { src: stable, html: head });
+  }
+  // Render a caret placeholder inline so the cursor sits at the end of the text being written.
+  const tail = renderMarkdown(`${segment.slice(end)}\u0001`, { streaming: true }).replace(
+    '\u0001',
+    '<span class="caret" aria-hidden="true"></span>',
+  );
+  return head + tail;
+}
+
 function renderAssistantBody(m: UiMessage): string {
   if (m.status === 'streaming' && !m.text) {
     return `<div class="thinking"><span></span><span></span><span></span></div>`;
@@ -379,14 +417,13 @@ function renderAssistantBody(m: UiMessage): string {
     const segment = parts[i]!;
     const last = i === parts.length - 1;
     if (streaming && last) {
-      // Render a caret placeholder inline so the cursor sits at the end of the text being written.
-      html += renderMarkdown(`${segment}\u0001`, { streaming: true }).replace(
-        '\u0001',
-        '<span class="caret" aria-hidden="true"></span>',
-      );
+      html += renderStreamingTail(`${m.id}:${i}:tail`, segment);
     } else if (segment.trim()) {
-      html += renderMarkdown(segment);
+      html += streaming ? renderSegmentCached(`${m.id}:${i}`, segment) : renderMarkdown(segment);
     }
+  }
+  if (!streaming) {
+    for (const k of [...renderCache.keys()]) if (k.startsWith(`${m.id}:`)) renderCache.delete(k);
   }
   return html;
 }
@@ -436,6 +473,7 @@ function renderEditCard(m: UiMessage, editId: string): string {
       <span class="edit-status ${st.cls}" title="${escapeHtml(st.label)}">${icon(st.icon)}<span>${escapeHtml(st.label)}</span></span>
     </div>
     ${e.inferredPath ? `<div class="note">${icon('info')}<span>The model didn't name a file, so this edit targets <code>${escapeHtml(e.path)}</code>.</span></div>` : ''}
+    ${e.note ? `<div class="note">${icon('info')}<span>${escapeHtml(e.note)}</span></div>` : ''}
     ${e.error ? `<div class="note warn-text">${icon('warning')}<span>${escapeHtml(e.error)}</span></div>` : ''}
     ${preview}
     ${actions ? `<div class="edit-actions">${actions}</div>` : ''}
