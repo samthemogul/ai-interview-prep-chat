@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-09-28
+
+### Added
+
+- **Ask, Plan and Agent modes**, available in both Guarded and Unguarded, switchable above the message box or with **Switch Chat Mode**.
+- **Agent mode**: the AI proposes search-and-replace edits that appear as edit cards with a preview, **Review diff** (VS Code's diff editor), **Accept**, **Reject** and **Revert**. Nothing is written until you accept; accepted edits go through VS Code's undo stack. Guarded Agent only edits files to implement an approach you describe.
+- **Plan mode**: Unguarded drafts a plan (goal, files, steps, risks, how to verify) with an **Implement with Agent** button; Guarded reviews the candidate's own plan with questions.
+- Transcripts record proposed edits, accept/reject/revert decisions, and whether the diff was opened first. Unguarded sessions are recorded too.
+
+### Changed
+
+- **Normal Mode is now called Unguarded Mode** in the UI (the setting value stays `normal`).
+- Guarded refusals are short: the prompt asks for one sentence plus a hint, and the reply is capped (`num_predict`) and trimmed to the last full sentence.
+- Approach answers show only the new or changed code. If the model repeats the whole file, the guard trims it to the changed lines.
+
 ## [0.1.1] - 2026-09-28
 
 ### Fixed

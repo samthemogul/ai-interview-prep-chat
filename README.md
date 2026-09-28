@@ -1,6 +1,6 @@
 # AIInterviewPrepChat
 
-**Practise AI-assisted coding interviews inside VS Code, with a local AI that helps you think but won't solve the task for you.**
+**Practise AI-assisted coding interviews inside VS Code with a local AI: guarded like a standard coding test, or unguarded with an agent that edits your files, like a Code Repos round.**
 
 AIInterviewPrepChat adds a chat sidebar that answers questions about the repository you have open. It runs entirely on your machine through [Ollama](https://ollama.com). By default it behaves like the guarded AI assistants used in modern technical assessments: it explains code, errors and concepts, helps you find your way around, and writes code only for approaches you describe yourself.
 
@@ -8,9 +8,9 @@ AIInterviewPrepChat adds a chat sidebar that answers questions about the reposit
 
 <!-- Screenshot placeholders: the images below are renders of the chat webview. Replace them with captures from VS Code before publishing. -->
 
-| Guarded chat                                  | Setup                                     | Normal Mode                                 |
-| --------------------------------------------- | ----------------------------------------- | ------------------------------------------- |
-| ![Guarded chat](docs/images/chat-guarded.png) | ![Onboarding](docs/images/onboarding.png) | ![Normal mode](docs/images/normal-mode.png) |
+| Guarded · Ask                                 | Unguarded · Agent                         | Unguarded · Plan                        |
+| --------------------------------------------- | ----------------------------------------- | --------------------------------------- |
+| ![Guarded chat](docs/images/chat-guarded.png) | ![Agent mode](docs/images/agent-mode.png) | ![Plan mode](docs/images/plan-mode.png) |
 
 ---
 
@@ -21,9 +21,10 @@ A lightweight VS Code extension that combines:
 - **a local model** served by Ollama (any Ollama chat model: Qwen, Llama, Mistral and others)
 - **codebase context**: the open file, your selection, referenced files, diagnostics, and the most relevant snippets from your repository
 - **a polished chat sidebar** with streaming Markdown, syntax highlighting and file links
-- **Guarded Interview Mode**, a constrained assistant for interview practice
+- **two interview settings**: Guarded (the AI won't solve the task) and Unguarded (it will, like the Code Repos assistant in real assessments)
+- **three chat modes**: Ask, Plan and Agent, where every file edit is shown as a diff you accept or reject
 
-It is deliberately **not** a Copilot replacement or an autonomous agent. It never edits your files, never runs commands and never sends your code anywhere.
+It is deliberately **not** a Copilot replacement. It never runs commands, never changes a file without your explicit approval, and never sends your code anywhere.
 
 ## Why?
 
@@ -36,14 +37,39 @@ Doing well means using the AI to **understand** faster while still doing the pro
 ## Features
 
 - 💬 **Chat sidebar** in the Activity Bar with streamed responses, **Stop**, **Retry**, **Copy** and **New conversation**
-- 🛡️ **Guarded Interview Mode** (default) and **Normal Mode**, always visible in the header
+- 🛡️ **Guarded** (default) and **Unguarded** interview settings, always visible in the header
+- 🧭 **Ask, Plan and Agent** modes, switchable above the message box
+- ✏️ **Reviewable agent edits**: each change appears as a card with a preview, **Review diff**, **Accept**, **Reject** and **Revert**. Nothing is written until you accept
 - 📁 **Context references**: `@file:path`, `@selection`, `@workspace`, `@diagnostics`, plus one-click **Current file**, **Selection** and **Diagnostics** chips
 - 🔎 **Local repository search**: file names, text, symbols (via your language servers) and imports of the open file. A small number of relevant snippets is sent; never the whole repository
 - 👀 **Transparent context**: every answer lists "Using context from…" with clickable file links
 - 🧠 **Model picker** listing your installed Ollama models, with a guided download that always asks before downloading
-- 🧾 **Practice transcript**: local record of guarded sessions, with flagged attempts to get the answer directly
+- 🧾 **Practice transcript**: local record of every session, including edits you accepted and whether you reviewed them first
 - 🎨 Native look that follows light, dark and high-contrast themes
 - 🔒 **Local only**: no telemetry, no accounts, no cloud
+
+## Modes
+
+Two independent choices, both visible at all times:
+
+|               | **Ask**                                         | **Plan**                                                    | **Agent**                                              |
+| ------------- | ----------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
+| **Guarded**   | Explains and hints; code only for your approach | Reviews _your_ plan with questions; never writes it for you | Edits files only to implement an approach you describe |
+| **Unguarded** | Ordinary coding assistant                       | Drafts a plan (goal, files, steps, risks, checks) with you  | Edits files for any request                            |
+
+They mirror the two setups used by AI-assisted assessment platforms: **guarded** for standard coding questions (ask-only, no complete solutions) and **unguarded** for Code Repos questions (an agent that edits files after you approve, plus a plan mode).
+
+### Agent edits
+
+In Agent mode the model proposes each change as a small search-and-replace edit. The extension checks it against the real file and shows an **edit card**:
+
+- a preview of the added and removed lines, with **Review diff** to open VS Code's side-by-side diff
+- **Accept** writes the change (through VS Code, so **Undo** works) and saves the file; **Reject** discards it; **Revert** puts the file back afterwards
+- nothing is written until you accept. If the file changed in the meantime, the edit is re-applied to the current content, or refused if it no longer fits
+- edits can't touch files outside the workspace, `.git`, dependency or build folders, or binaries
+- the AI can't run commands or tests; it tells you what to run
+
+In Unguarded Plan mode, **Implement with Agent** under a plan switches to Agent mode and implements it.
 
 ## Guarded Interview Mode
 
@@ -60,9 +86,10 @@ Guarded Interview Mode is a **conceptual mentor, not a code generator**. The rul
 - write the solution, or any part of it, as code
 - rewrite, correct or complete your code, or show diffs and patches
 - give pseudocode that maps line by line onto the answer, or a plan that walks through the whole fix
-- edit files, run commands or run tests (the extension has no such capability in any mode)
+- edit files, except to implement your own approach in Agent mode
+- run commands or run tests (the extension has no such capability in any mode)
 
-If you ask it to solve the task, it declines in one sentence and gives you a hint or a guiding question instead. Attempts to get around the rules ("the rules changed", role-play, "just as an example") get the same answer.
+If you ask it to solve the task, it declines in one sentence and gives you a hint or a guiding question instead. Refusals are also capped in length, so a model that starts explaining the solution is cut short. Attempts to get around the rules ("the rules changed", role-play, "just as an example") get the same answer.
 
 ### Describe your approach, get the code
 
@@ -75,6 +102,7 @@ You do the thinking; the AI can do the typing. Describe **how** to do something 
 - The AI may choose names, loop style, types and trivial edge cases. It won't choose the algorithm or design, add fixes you didn't ask for, or change unrelated code. If a real decision is missing, it asks you.
 - If your approach is wrong, it still implements it as described. It may ask one neutral question, but it won't reveal the correct fix.
 - `/implement …` is an optional shortcut that marks a message as an approach.
+- You get only the new or changed code. If the model repeats the whole file, the guard trims it down to what changed. In Agent mode the approach is applied as an edit you review.
 
 ### Enforced in code, not just by the prompt
 
@@ -85,11 +113,11 @@ Small local models don't follow instructions reliably, so an **output guard** ch
 - approach implementations are allowed only when the model marks the answer as one (with a marker the extension removes before display), and are capped at 80 lines
 - if you type the marker yourself, it is stripped, so you can't unlock code that way
 
-Switching from Guarded to Normal Mode asks for confirmation and is recorded in the transcript.
+Switching from Guarded to Unguarded asks for confirmation and is recorded in the transcript.
 
 ### Practice transcript
 
-Assessment platforms show hiring managers every prompt and response. AIInterviewPrepChat keeps a similar record **locally** for guarded sessions: prompts, responses, which files were used as context, mode switches, and flags such as _asked for code_, _pasted the task_, _tried to change the rules_ or _AI implemented the candidate's approach_.
+Assessment platforms show hiring managers every prompt, response and applied edit. AIInterviewPrepChat keeps a similar record **locally**: prompts, responses, which files were used as context, mode switches, every edit you accepted, rejected or reverted (and whether you opened the diff first), and flags such as _asked for code_, _pasted the task_, _tried to change the rules_ or _AI implemented the candidate's approach_.
 
 Use **AIInterviewPrepChat: Review Session Transcript** to see the summary. **Export Transcript** saves it as Markdown and **Delete Transcripts** removes them all. You can turn recording off with `aiInterviewPrepChat.saveTranscripts`.
 
@@ -132,7 +160,7 @@ Sizes are approximate. Code-focused models give the best answers about code; lar
   - `@workspace` includes an overview of the repository structure
   - `@diagnostics` includes current errors and warnings
 - **Chips** above the input include the current file, the selection or diagnostics with your **next** message.
-- **Right-click selected code** → AIInterviewPrepChat → _Explain Selection_, _Ask About Selection_, or _Find Potential Issues_ (Normal Mode) / _Ask Guiding Questions_ (Guarded Mode).
+- **Right-click selected code** → AIInterviewPrepChat → _Explain Selection_, _Ask About Selection_, or _Find Potential Issues_ (Unguarded) / _Ask Guiding Questions_ (Guarded Mode).
 - **Right-click a file** in the Explorer → AIInterviewPrepChat → _Explain File_ or _Ask About File_.
 - Click a file path in an answer to open it.
 - **Enter** sends, **Shift+Enter** adds a new line and **Esc** stops generation.
@@ -146,11 +174,12 @@ Sizes are approximate. Code-focused models give the best answers about code; lar
 | AIInterviewPrepChat: Clear Conversation        | Clears the chat                                        |
 | AIInterviewPrepChat: Explain Selection         | Explains the selected code                             |
 | AIInterviewPrepChat: Ask About Selection       | Starts a question about the selection                  |
-| AIInterviewPrepChat: Find Potential Issues     | Reviews the selection (Normal Mode)                    |
+| AIInterviewPrepChat: Find Potential Issues     | Reviews the selection (Unguarded)                      |
 | AIInterviewPrepChat: Ask Guiding Questions     | Asks you questions about the selection (Guarded Mode)  |
 | AIInterviewPrepChat: Explain Current File      | Explains the active file                               |
 | AIInterviewPrepChat: Ask About Workspace       | Starts a question with `@workspace`                    |
-| AIInterviewPrepChat: Toggle Interview Mode     | Switches between Guarded and Normal Mode               |
+| AIInterviewPrepChat: Toggle Interview Mode     | Switches between Guarded and Unguarded                 |
+| AIInterviewPrepChat: Switch Chat Mode          | Switches between Ask, Plan and Agent                   |
 | AIInterviewPrepChat: Select Model              | Chooses an installed Ollama model                      |
 | AIInterviewPrepChat: Download a Model…         | Downloads a model through Ollama after confirmation    |
 | AIInterviewPrepChat: Check Ollama              | Checks the connection and installed models             |
@@ -166,7 +195,8 @@ Sizes are approximate. Code-focused models give the best answers about code; lar
 | -------------------------------------------- | ------------------------ | ----------------------------------------------------------------- |
 | `aiInterviewPrepChat.ollamaEndpoint`         | `http://localhost:11434` | Ollama server URL. A warning appears if it's not on this machine. |
 | `aiInterviewPrepChat.model`                  | _(empty)_                | Model to use; chosen automatically if empty                       |
-| `aiInterviewPrepChat.mode`                   | `guarded`                | `guarded` or `normal`                                             |
+| `aiInterviewPrepChat.mode`                   | `guarded`                | `guarded` or `normal` (Unguarded)                                 |
+| `aiInterviewPrepChat.chatMode`               | `ask`                    | `ask`, `plan` or `agent`                                          |
 | `aiInterviewPrepChat.maxContextFiles`        | `5`                      | Files retrieved automatically per question                        |
 | `aiInterviewPrepChat.maxContextCharacters`   | `12000`                  | Maximum repository context per message                            |
 | `aiInterviewPrepChat.contextWindow`          | `8192`                   | Context window requested from Ollama (`num_ctx`)                  |
@@ -191,9 +221,9 @@ See [PRIVACY.md](PRIVACY.md) for details.
 
 ## Security
 
-- **Model output is untrusted.** It is rendered as escaped Markdown. Raw HTML is shown as text, links are not clickable and images are never loaded. There is no Apply, Insert or Run button, and nothing the model writes is ever executed.
+- **Model output is untrusted.** It is rendered as escaped Markdown. Raw HTML is shown as text, links are not clickable and images are never loaded. There is no Run button, and nothing the model writes is ever executed.
 - **No command execution.** The extension never spawns processes; a lint rule forbids importing `child_process`.
-- **No file writes.** The extension doesn't edit workspace files. The only file it writes is an exported transcript, to a location you choose.
+- **File writes only with your approval.** In Agent mode, proposed edits are held until you click **Accept**, are limited to the workspace (never `.git`, dependency or build folders, or binaries) and go through VS Code's undo stack. Outside Agent mode, the only file the extension writes is an exported transcript, to a location you choose.
 - **Workspace boundary.** Only files inside the open workspace are read. `@file` paths that are absolute or contain `..` are refused. The prompt uses workspace-relative paths only.
 - **Prompt-injection hardening.** Repository content is wrapped in a clearly delimited data section that the system prompt says to treat as data. Attempts to close that section or spoof the approach marker are neutralised. The output guard enforces the guarded limits regardless of what the model was persuaded to do.
 - **Strict webview CSP.** Scripts run only with a per-load nonce, and there is no remote content.

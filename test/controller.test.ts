@@ -413,7 +413,7 @@ describe('ChatController: Guarded Interview Mode', () => {
     expect(host.confirms).toHaveLength(2);
   });
 
-  it('does not record Normal Mode conversations that were never guarded', async () => {
+  it('records unguarded conversations too', async () => {
     const { host, controller } = setup({ reply: () => ['ok'] });
     host.settings.mode = 'normal';
     const c = new ChatController({
@@ -426,7 +426,8 @@ describe('ChatController: Guarded Interview Mode', () => {
     });
     await c.refreshOllama();
     await c.send('hello', NO_CHIPS);
-    expect(host.transcripts).toHaveLength(0);
+    const turn = host.latestTranscript()!.events[0]!;
+    expect(turn.type === 'turn' && turn.flags).toEqual(['unguarded']);
     void controller;
   });
 
@@ -456,5 +457,285 @@ describe('ChatController: onboarding', () => {
     expect(host.onboarded).toBe(true);
     expect(host.settings.mode).toBe('normal');
     expect(host.confirms).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Ask / Plan / Agent modes (0.2.0)
+
+const PYSERVER = [
+  'from fastapi import FastAPI',
+  'from pymongo import MongoClient',
+  '',
+  'app = FastAPI()',
+  'client = MongoClient(os.environ["MONGODB_URL"])',
+  'db = client["uhl"]',
+  'users = db["users"]',
+  '',
+  'class User(BaseModel):',
+  '    name: str',
+  '    email: str',
+  '',
+  'def serialize(mongo_result):',
+  '    mongo_result["id"] = str(mongo_result.pop("_id"))',
+  '    return mongo_result',
+  '',
+  '@app.get("/", status_code=200)',
+  'def get_all_users():',
+  '    result = users.find()',
+  '    all_users = []',
+  '    for user in result:',
+  '        all_users.append(serialize(user))',
+  '    return all_users',
+  '',
+  '@app.post("/create", status_code=201)',
+  'def create_user(user: User):',
+  '    result = users.insert_one(user.model_dump())',
+  '    user = users.find_one({ "_id": result.inserted_id})',
+  '    return { "message": "User has been added", "user": user}',
+  '',
+].join('\n');
+
+class FakeEditHost {
+  diffs: string[] = [];
+  constructor(public files: Record<string, string>) {}
+  async readFile(p: string) {
+    return this.files[p];
+  }
+  async writeFile(p: string, c: string) {
+    this.files[p] = c;
+  }
+  async deleteFile(p: string) {
+    delete this.files[p];
+  }
+  async showDiff(e: { id: string }) {
+    this.diffs.push(e.id);
+  }
+  async listFiles() {
+    return Object.keys(this.files);
+  }
+}
+
+function setupModes(reply: () => string[], settings: Partial<Settings> = {}) {
+  const ollama = createFakeOllama({ models: [{ name: 'qwen2.5-coder:1.5b' }], reply });
+  const host = new FakeHost(ollama);
+  host.settings = { ...host.settings, ...settings };
+  const files = { 'pyserver.py': PYSERVER };
+  const ws = new MemoryWorkspace(files);
+  const editHost = new FakeEditHost({ ...files });
+  const controller = new ChatController({
+    host,
+    state: new ChatState('c-modes'),
+    source: ws,
+    retriever: new ContextRetriever(ws),
+    logger: nullLogger,
+    pollIntervalMs: 0,
+    edits: editHost,
+  });
+  return { ollama, host, controller, editHost };
+}
+
+const EDIT_REPLY = [
+  "I'll add the endpoint before `create_user`.\n\n",
+  'pyserver.py\n```python\n<<<<<<< SEARCH\n',
+  '@app.post("/create", status_code=201)\n',
+  '=======\n',
+  '@app.get("/users/{id}")\n',
+  'def get_one_user(id: str):\n',
+  '    user = users.find_one({"_id": ObjectId(id)})\n',
+  '    if user is None:\n',
+  '        raise HTTPException(status_code=404, detail="User not found")\n',
+  '    return serialize(user)\n',
+  '\n',
+  '@app.post("/create", status_code=201)\n',
+  '>>>>>>> REPLACE\n```\n',
+  'Run the server and request /users/<id> to check it.',
+];
+
+describe('Guarded Ask: short refusals', () => {
+  it('caps the reply length for an outcome-only request and trims to the last full sentence', async () => {
+    const rambling = [
+      "Let's start by understanding the existing code. The pyserver.py file contains the main logic. ",
+      'Here is a step-by-step approach: 1. identify the parts, 2. define the route, 3. implement the logic, 4. serialize, 5. return the user and handle errors in a very long winded way that keeps going',
+    ];
+    const { host, controller, ollama } = setupModes(() => rambling);
+    await controller.refreshOllama();
+    await controller.send('create a get one user endpoint', NO_CHIPS);
+    expect(ollama.chatRequests[0]!.options.num_predict).toBe(180);
+    const note = ollama.chatRequests[0]!.messages.find((m: ChatMessage) => m.content.startsWith('Turn note'));
+    expect(note!.content).toMatch(/at most three short sentences/);
+    const text = host.lastState()!.messages[1]!.text;
+    expect(text.endsWith('.')).toBe(true);
+    expect(text).not.toContain('keeps going');
+  });
+
+  it('does not cap approach turns or ordinary questions', async () => {
+    const { controller, ollama } = setupModes(() => ['ok']);
+    await controller.refreshOllama();
+    await controller.send('What does serialize do?', NO_CHIPS);
+    await controller.send(
+      'add a function that loops over the users, counts them and returns the count',
+      NO_CHIPS,
+    );
+    expect(ollama.chatRequests.map((r) => r.options.num_predict)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('Guarded Ask: approach answers show only the changed section', () => {
+  it('trims a whole-file answer down to the new endpoint', async () => {
+    const wholeFile = PYSERVER.replace(
+      '@app.post("/create", status_code=201)',
+      [
+        '@app.get("/users/{id}")',
+        'def get_one_user(id: str):',
+        '    user = users.find_one({"_id": id})',
+        '    if user is None:',
+        '        raise HTTPException(status_code=404, detail="User not found")',
+        '    return serialize(user)',
+        '',
+        '@app.post("/create", status_code=201)',
+      ].join('\n'),
+    );
+    const { host, controller } = setupModes(() => [
+      '[APPROACH] Here is the endpoint:\n```python\n',
+      wholeFile,
+      '```\n',
+    ]);
+    await controller.refreshOllama();
+    await controller.send(
+      'create a get one user endpoint /users/{id} that takes in the user id, queries the database and returns the user if found or returns a json with 404 error code saying it is not found @file:pyserver.py',
+      NO_CHIPS,
+    );
+    const text = host.lastState()!.messages[1]!.text;
+    expect(text).toContain('def get_one_user');
+    expect(text).toContain('Showing only the new and changed lines');
+    expect(text).not.toContain('class User(BaseModel)');
+    expect(text).not.toContain('def get_all_users');
+  });
+});
+
+describe('Agent mode', () => {
+  it('unguarded: proposes an edit without touching the file, then applies it on accept', async () => {
+    const { host, controller, editHost } = setupModes(() => EDIT_REPLY, {
+      mode: 'normal',
+      chatMode: 'agent',
+    });
+    await controller.refreshOllama();
+    await controller.send('add a get one user endpoint', NO_CHIPS);
+    const msg = host.lastState()!.messages[1]!;
+    expect(msg.text).toContain('%%EDIT:');
+    expect(msg.text).not.toContain('SEARCH');
+    const edit = msg.edits![0]!;
+    expect(edit).toMatchObject({ path: 'pyserver.py', status: 'pending', diffOpened: false });
+    expect(edit.added).toBeGreaterThan(4);
+    expect(editHost.files['pyserver.py']).toBe(PYSERVER);
+
+    await controller.editAction(msg.id, edit.id, 'diff');
+    expect(editHost.diffs).toEqual([edit.id]);
+    await controller.editAction(msg.id, edit.id, 'accept');
+    expect(editHost.files['pyserver.py']).toContain('def get_one_user(id: str):');
+    expect(host.lastState()!.messages[1]!.edits![0]!.status).toBe('accepted');
+
+    const events = host.latestTranscript()!.events;
+    expect(events.map((e) => e.type)).toEqual(['turn', 'edit']);
+    expect(events[1]).toMatchObject({
+      type: 'edit',
+      action: 'accepted',
+      reviewed: true,
+      path: 'pyserver.py',
+    });
+    const turn = events[0]!;
+    expect(turn.type === 'turn' && turn.chatMode).toBe('agent');
+    expect(turn.type === 'turn' && turn.flags).toContain('edits-proposed');
+  });
+
+  it('records edits accepted without opening the diff, and supports reject and revert', async () => {
+    const { host, controller, editHost } = setupModes(() => EDIT_REPLY, {
+      mode: 'normal',
+      chatMode: 'agent',
+    });
+    await controller.refreshOllama();
+    await controller.send('add a get one user endpoint', NO_CHIPS);
+    let msg = host.lastState()!.messages[1]!;
+    await controller.editAction(msg.id, msg.edits![0]!.id, 'accept');
+    await controller.editAction(msg.id, msg.edits![0]!.id, 'revert');
+    expect(editHost.files['pyserver.py']).toBe(PYSERVER);
+    const edits = host.latestTranscript()!.events.filter((e) => e.type === 'edit');
+    expect(edits).toMatchObject([{ action: 'accepted', reviewed: false }, { action: 'reverted' }]);
+
+    await controller.send('add it again', NO_CHIPS);
+    msg = host.lastState()!.messages[3]!;
+    await controller.editAction(msg.id, msg.edits![0]!.id, 'reject');
+    expect(editHost.files['pyserver.py']).toBe(PYSERVER);
+    expect(host.lastState()!.messages[3]!.edits![0]!.status).toBe('rejected');
+  });
+
+  it('guarded: blocks edits for outcome-only requests', async () => {
+    const { host, controller, editHost } = setupModes(() => EDIT_REPLY, { chatMode: 'agent' });
+    await controller.refreshOllama();
+    await controller.send('create a get one user endpoint', NO_CHIPS);
+    const edit = host.lastState()!.messages[1]!.edits![0]!;
+    expect(edit.status).toBe('failed');
+    expect(edit.error).toMatch(/only edits files to implement an approach/);
+    expect(editHost.files['pyserver.py']).toBe(PYSERVER);
+  });
+
+  it('guarded: proposes edits for a described approach', async () => {
+    const { host, controller } = setupModes(() => ['[APPROACH]\n', ...EDIT_REPLY], { chatMode: 'agent' });
+    await controller.refreshOllama();
+    await controller.send(
+      'add an endpoint /users/{id} that takes in the id, queries the database for the user and returns it, or returns a 404 json if not found',
+      NO_CHIPS,
+    );
+    const msg = host.lastState()!.messages[1]!;
+    expect(msg.approach).toBe(true);
+    expect(msg.edits![0]!.status).toBe('pending');
+    expect(msg.text).not.toContain('[APPROACH]');
+  });
+
+  it('describes previous edits to the model instead of placeholders', async () => {
+    const { host, controller, ollama } = setupModes(() => EDIT_REPLY, { mode: 'normal', chatMode: 'agent' });
+    await controller.refreshOllama();
+    await controller.send('add a get one user endpoint', NO_CHIPS);
+    const msg = host.lastState()!.messages[1]!;
+    await controller.editAction(msg.id, msg.edits![0]!.id, 'accept');
+    await controller.send('now add a delete endpoint', NO_CHIPS);
+    const history = ollama.chatRequests[1]!.messages.filter((m: ChatMessage) => m.role === 'assistant');
+    expect(history[0]!.content).toContain('[Proposed edit to pyserver.py (+');
+    expect(history[0]!.content).toContain('accepted]');
+    expect(history[0]!.content).not.toContain('%%EDIT');
+  });
+
+  it('uses the agent system prompt with the edit format', async () => {
+    const { controller, ollama } = setupModes(() => ['ok'], { mode: 'normal', chatMode: 'agent' });
+    await controller.refreshOllama();
+    await controller.send('hi', NO_CHIPS);
+    expect(ollama.chatRequests[0]!.messages[0]!.content).toContain('<<<<<<< SEARCH');
+  });
+});
+
+describe('Plan mode', () => {
+  it('uses the plan prompt, and unguarded plans can be handed to the agent', async () => {
+    const { host, controller, ollama } = setupModes(() => ['**Goal** add endpoint'], {
+      mode: 'normal',
+      chatMode: 'plan',
+    });
+    await controller.refreshOllama();
+    await controller.send('plan a get one user endpoint', NO_CHIPS);
+    expect(ollama.chatRequests[0]!.messages[0]!.content).toContain('PLAN MODE:');
+    await controller.implementPlan();
+    expect(controller.currentChatMode).toBe('agent');
+    expect(host.settings.chatMode).toBe('agent');
+    expect(ollama.chatRequests[1]!.messages.at(-1)!.content).toContain('Implement the plan above.');
+    expect(ollama.chatRequests[1]!.messages[0]!.content).toContain('AGENT MODE:');
+  });
+
+  it('guarded plan reviews the candidate’s plan instead of writing one', async () => {
+    const { controller, ollama } = setupModes(() => ['ok'], { chatMode: 'plan' });
+    await controller.refreshOllama();
+    await controller.send('here is my plan: add a route, query by id, return 404', NO_CHIPS);
+    expect(ollama.chatRequests[0]!.messages[0]!.content).toContain('Do not write the plan for them');
+    await controller.implementPlan();
+    expect(controller.currentChatMode).toBe('plan');
   });
 });

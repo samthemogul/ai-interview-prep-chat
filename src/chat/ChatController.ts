@@ -1,5 +1,18 @@
 import type { ChatState, StoredMessage } from './ChatState';
-import type { Chips, HostToWebview, Mode, OllamaState, UiModel, ViewState } from './protocol';
+import type {
+  ChatMode,
+  Chips,
+  EditAction,
+  HostToWebview,
+  Mode,
+  OllamaState,
+  UiEdit,
+  UiModel,
+  ViewState,
+} from './protocol';
+import { EditBlockExtractor, type RawEdit } from '../agent/EditBlocks';
+import { EditManager, type EditHost } from '../agent/EditManager';
+import { APPROACH_LINE_CAP, GUARDED_REFUSAL_MAX_TOKENS } from '../interview/GuardedPrompt';
 import { buildMessages } from './PromptBuilder';
 import type { OllamaClient, OllamaModel } from '../ollama/OllamaClient';
 import type { OllamaAvailability } from '../ollama/OllamaDetector';
@@ -19,7 +32,7 @@ import type { DiagnosticEntry } from '../context/DiagnosticsContext';
 import { parseReferences } from '../context/References';
 import type { GuardReport } from '../interview/OutputGuard';
 import { OutputGuard, stripLineNumbers } from '../interview/OutputGuard';
-import { classifyRequest, turnReminder } from '../interview/RequestClassifier';
+import { classifyRequest, isRefusalTurn, turnReminder } from '../interview/RequestClassifier';
 import { requiresConfirmation, otherMode, MODE_LABELS } from '../interview/InterviewMode';
 import type { TranscriptSession } from '../interview/Transcript';
 import { deriveFlags, newSession } from '../interview/Transcript';
@@ -63,11 +76,28 @@ export interface ChatControllerDeps {
   logger: Logger;
   /** How often to re-check Ollama while it isn't reachable (ms). 0 disables polling. */
   pollIntervalMs?: number;
+  /** File access for Agent mode. Without it, proposed edits can't be applied. */
+  edits?: EditHost;
 }
+
+const NO_EDIT_HOST: EditHost = {
+  readFile: async () => {
+    throw new Error('File editing is not available.');
+  },
+  writeFile: async () => {
+    throw new Error('File editing is not available.');
+  },
+  deleteFile: async () => {
+    throw new Error('File editing is not available.');
+  },
+  showDiff: async () => undefined,
+  listFiles: async () => [],
+};
 
 /**
  * Owns the conversation, the Ollama connection state and the send/stop/retry flow.
- * It never touches files or runs commands; the model's output is only ever displayed.
+ * It never runs commands. In Agent mode it only changes files through the EditManager,
+ * and only after the user accepts a proposed edit.
  */
 export class ChatController {
   private readonly host: ChatHost;
@@ -79,6 +109,8 @@ export class ChatController {
   private model: string | undefined;
   private modelMissing = false;
   private mode: Mode;
+  private chatMode: ChatMode;
+  private readonly editManager: EditManager;
   private chips: Chips = { currentFile: false, selection: false, diagnostics: false };
   private transcript: TranscriptSession | undefined;
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -90,6 +122,12 @@ export class ChatController {
     this.host = deps.host;
     this.state = deps.state;
     this.mode = this.host.getSettings().mode;
+    this.chatMode = this.host.getSettings().chatMode;
+    this.editManager = new EditManager(deps.edits ?? NO_EDIT_HOST, () => this.host.newId());
+  }
+
+  get currentChatMode(): ChatMode {
+    return this.chatMode;
   }
 
   // ---------------------------------------------------------------- view state
@@ -119,6 +157,7 @@ export class ChatController {
     const editor = this.host.getEditorState();
     return {
       mode: this.mode,
+      chatMode: this.chatMode,
       model: this.model,
       models: sortModels(this.models).map<UiModel>((m) => ({
         name: m.name,
@@ -253,8 +292,8 @@ export class ChatController {
     if (requiresConfirmation(from, to)) {
       const ok = await this.host.confirm(
         `Switch to ${MODE_LABELS.normal}?`,
-        'Normal Mode removes the interview guard: the AI can write solutions for you. The switch is recorded in your practice transcript.',
-        'Switch to Normal Mode',
+        'Unguarded Mode removes the interview guard: the AI can write the solution for you, like the unguarded Code Repos assistant in real assessments. The switch is recorded in your practice transcript.',
+        'Switch to Unguarded',
       );
       if (!ok) {
         this.postState();
@@ -280,10 +319,21 @@ export class ChatController {
     }
   }
 
+  async setChatMode(to: ChatMode): Promise<void> {
+    if (to === this.chatMode) {
+      this.postState();
+      return;
+    }
+    this.chatMode = to;
+    this.postState();
+    await this.host.updateSetting('chatMode', to);
+  }
+
   /** Keeps state in sync when settings are edited directly in the Settings UI. */
   async onSettingsChanged(changed: Array<keyof Settings>): Promise<void> {
     const s = this.host.getSettings();
     if (changed.includes('mode') && s.mode !== this.mode) await this.applyMode(this.mode, s.mode);
+    if (changed.includes('chatMode')) this.chatMode = s.chatMode;
     if (changed.includes('ollamaEndpoint') || changed.includes('model')) {
       await this.refreshOllama();
     } else {
@@ -347,6 +397,7 @@ export class ChatController {
     const signal = controller.signal;
     const settings = this.host.getSettings();
     const mode = this.mode;
+    const chatMode = this.chatMode;
 
     const classification = classifyRequest(text);
     const refs = parseReferences(classification.text);
@@ -358,6 +409,7 @@ export class ChatController {
       modelText: refs.text,
       chips,
       mode,
+      chatMode,
       status: 'done',
       sources: [],
       notes: [],
@@ -368,6 +420,7 @@ export class ChatController {
       role: 'assistant',
       text: '',
       mode,
+      chatMode,
       status: 'streaming',
       sources: [],
       notes: [],
@@ -381,6 +434,35 @@ export class ChatController {
     let bundle: ContextBundle = { items: [], notes: [], sources: [], totalChars: 0 };
     let activeGuard = new OutputGuard({ enabled: false });
     let errorCode: string | undefined;
+    // Agent mode: edit blocks are pulled out of the stream and proposed as reviewable edits.
+    const queued: Array<{ id: string; raw: RawEdit }> = [];
+    const proposals: Array<Promise<void>> = [];
+    const extractor =
+      chatMode === 'agent'
+        ? new EditBlockExtractor((raw) => {
+            const id = this.host.newId();
+            queued.push({ id, raw });
+            return id;
+          })
+        : undefined;
+    let fallbackPath: string | undefined;
+    const refusal = mode === 'guarded' && chatMode !== 'plan' && isRefusalTurn(classification);
+    let doneReason: string | undefined;
+    const emit = (raw: string) => {
+      const text = extractor ? extractor.push(raw) : raw;
+      const safe = text ? activeGuard.push(text) : '';
+      if (safe) this.appendText(assistant.id, safe);
+      this.drainEdits(assistant.id, queued, proposals, activeGuard, mode, fallbackPath);
+    };
+    const finishStream = () => {
+      if (extractor) {
+        const rest = extractor.finish();
+        const safe = rest ? activeGuard.push(rest) : '';
+        if (safe) this.appendText(assistant.id, safe);
+      }
+      this.flushGuard(assistant.id, activeGuard);
+      this.drainEdits(assistant.id, queued, proposals, activeGuard, mode, fallbackPath);
+    };
 
     try {
       if (this.ollamaState !== 'running' || !this.model) {
@@ -424,13 +506,18 @@ export class ChatController {
       }
       this.state.update(assistant.id, { sources: bundle.sources, notes: bundle.notes });
       this.postMessage(assistant.id);
+      // If the model doesn't name a file, edits go to the file the user pointed at (or the best match).
+      fallbackPath =
+        bundle.items.find((i) => i.kind === 'selection' || i.kind === 'file' || i.kind === 'current-file')
+          ?.relPath ?? bundle.items.find((i) => i.kind === 'snippet')?.relPath;
 
       const messages = buildMessages({
         mode,
+        chatMode,
         history: this.state.historyForModel(user.id),
         userText: refs.text,
         context: bundle.items,
-        turnNote: mode === 'guarded' ? turnReminder(classification) : undefined,
+        turnNote: mode === 'guarded' ? turnReminder(classification, chatMode) : undefined,
       });
 
       activeGuard = new OutputGuard({
@@ -450,19 +537,29 @@ export class ChatController {
 
       const endpoint = normalizeEndpoint(settings.ollamaEndpoint);
       if (!endpoint) throw new UserFacingError('invalid-endpoint');
-      for await (const delta of this.host
-        .createClient(endpoint)
-        .chatStream(
-          { model, messages, temperature: settings.temperature, contextWindow: settings.contextWindow },
-          signal,
-        )) {
-        const safe = activeGuard.push(delta);
-        if (safe) this.appendText(assistant.id, safe);
+      for await (const delta of this.host.createClient(endpoint).chatStream(
+        {
+          model,
+          messages,
+          temperature: settings.temperature,
+          contextWindow: settings.contextWindow,
+          // A guarded refusal only needs a sentence and a hint; cap it so the model can't ramble.
+          maxTokens: refusal ? GUARDED_REFUSAL_MAX_TOKENS : undefined,
+          onDone: (reason) => {
+            doneReason = reason;
+          },
+        },
+        signal,
+      )) {
+        emit(delta);
       }
-      this.flushGuard(assistant.id, activeGuard);
+      finishStream();
+      if (refusal && doneReason === 'length') this.trimToLastSentence(assistant.id);
+      await Promise.all(proposals);
       this.state.update(assistant.id, { status: 'done' });
     } catch (err) {
-      this.flushGuard(assistant.id, activeGuard);
+      finishStream();
+      await Promise.allSettled(proposals);
       if (isAbortError(err) || signal.aborted) {
         this.state.update(assistant.id, { status: 'stopped' });
       } else {
@@ -487,6 +584,135 @@ export class ChatController {
       await this.host.saveConversation(this.state.serialize());
       this.postState();
     }
+  }
+
+  /** Proposes queued edits now that the guard has seen the text before them. */
+  private drainEdits(
+    messageId: string,
+    queued: Array<{ id: string; raw: RawEdit }>,
+    proposals: Array<Promise<void>>,
+    guard: OutputGuard,
+    mode: Mode,
+    fallbackPath: string | undefined,
+  ): void {
+    while (queued.length) {
+      const { id, raw } = queued.shift()!;
+      if (mode === 'guarded' && !guard.report.approach) {
+        this.setEdit(
+          messageId,
+          this.editManager.block(
+            messageId,
+            raw,
+            'Guarded Interview Mode only edits files to implement an approach you describe. Describe how to do it, or start your message with /implement.',
+            id,
+          ),
+        );
+        continue;
+      }
+      proposals.push(
+        this.editManager
+          .propose(messageId, raw, fallbackPath, id)
+          .then((info) => {
+            if (mode === 'guarded' && info.status === 'pending' && info.added > APPROACH_LINE_CAP) {
+              info =
+                this.editManager.fail(
+                  info.id,
+                  `Approach implementations are limited to ${APPROACH_LINE_CAP} new lines in Guarded Interview Mode. Split the approach into a smaller change.`,
+                ) ?? info;
+            }
+            this.setEdit(messageId, info);
+          })
+          .catch((err: unknown) => {
+            this.deps.logger.warn(`Proposing an edit failed: ${describeForLog(err)}`);
+            this.setEdit(
+              messageId,
+              this.editManager.block(messageId, raw, "This edit couldn't be prepared.", id),
+            );
+          }),
+      );
+    }
+  }
+
+  private setEdit(messageId: string, edit: UiEdit): void {
+    this.state.updateEdit(messageId, edit);
+    this.postMessage(messageId);
+  }
+
+  /** Cuts a length-capped answer back to its last complete sentence. */
+  private trimToLastSentence(id: string): void {
+    const m = this.state.get(id);
+    if (!m) return;
+    const t = m.text.trimEnd();
+    const cut = Math.max(
+      t.lastIndexOf('. '),
+      t.lastIndexOf('? '),
+      t.lastIndexOf('! '),
+      t.lastIndexOf('.\n'),
+      t.lastIndexOf('?\n'),
+    );
+    const last = /[.?!]$/.test(t) ? t.length : cut + 1;
+    if (last > 0 && last < t.length + 1) {
+      this.state.update(id, { text: t.slice(0, last) });
+      this.postMessage(id);
+    }
+  }
+
+  /** Review, accept, reject or revert an edit proposed in Agent mode. */
+  async editAction(messageId: string, editId: string, action: EditAction): Promise<void> {
+    let info;
+    try {
+      if (action === 'diff') info = await this.editManager.openDiff(editId);
+      else if (action === 'accept') info = await this.editManager.accept(editId);
+      else if (action === 'reject') info = this.editManager.reject(editId);
+      else info = await this.editManager.revert(editId);
+    } catch (err) {
+      this.deps.logger.error(`Edit ${action} failed: ${describeForLog(err)}`);
+      this.host.showError(`Couldn't ${action === 'diff' ? 'open the diff for' : action} this edit.`);
+      return;
+    }
+    if (!info) return;
+    this.setEdit(messageId, info);
+    if (
+      (action === 'accept' && info.status === 'accepted') ||
+      (action === 'reject' && info.status === 'rejected') ||
+      (action === 'revert' && info.status === 'reverted')
+    ) {
+      await this.recordEditDecision(
+        info,
+        action === 'accept' ? 'accepted' : action === 'reject' ? 'rejected' : 'reverted',
+      );
+    }
+    await this.host.saveConversation(this.state.serialize());
+  }
+
+  /** Unguarded Plan mode: switch to Agent and implement the agreed plan. */
+  async implementPlan(): Promise<void> {
+    if (this.mode !== 'normal') return;
+    await this.setChatMode('agent');
+    await this.send('Implement the plan above.', {
+      currentFile: false,
+      selection: false,
+      diagnostics: false,
+    });
+  }
+
+  private async recordEditDecision(
+    info: UiEdit,
+    action: 'accepted' | 'rejected' | 'reverted',
+  ): Promise<void> {
+    if (!this.host.getSettings().saveTranscripts) return;
+    this.ensureTranscript();
+    this.transcript!.events.push({
+      type: 'edit',
+      at: new Date().toISOString(),
+      editId: info.id,
+      path: info.path,
+      action,
+      reviewed: info.diffOpened,
+      added: info.added,
+      removed: info.removed,
+    });
+    await this.persistTranscript();
   }
 
   private appendText(id: string, text: string): void {
@@ -522,9 +748,16 @@ export class ChatController {
   ): Promise<void> {
     const settings = this.host.getSettings();
     if (!settings.saveTranscripts) return;
-    // Record guarded sessions; once a session has been guarded, later unguarded turns are recorded too.
-    if (assistant.mode !== 'guarded' && !this.transcript) return;
     this.ensureTranscript();
+    const flags = deriveFlags(assistant.mode, classification, report, assistant.text);
+    const edits = (assistant.edits ?? []).map((e) => ({
+      id: e.id,
+      path: e.path,
+      added: e.added,
+      removed: e.removed,
+      status: e.status,
+    }));
+    if (edits.some((e) => e.status !== 'failed')) flags.push('edits-proposed');
     this.transcript!.events.push({
       type: 'turn',
       at: user.createdAt,
@@ -533,8 +766,10 @@ export class ChatController {
       prompt: user.text,
       response: assistant.text,
       contextSources: bundle.sources,
-      flags: deriveFlags(assistant.mode, classification, report, assistant.text),
+      flags,
       removed: report.removed,
+      chatMode: assistant.chatMode as ChatMode | undefined,
+      edits: edits.length ? edits : undefined,
       stopped: assistant.status === 'stopped' || undefined,
       error: errorCode,
     });

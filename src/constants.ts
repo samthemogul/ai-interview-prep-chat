@@ -9,6 +9,7 @@ export const ID = 'aiInterviewPrepChat';
 export const VIEW_CONTAINER_ID = ID;
 export const CHAT_VIEW_ID = `${ID}.chat`;
 export const TRANSCRIPT_SCHEME = `${ID}-transcript`;
+export const PROPOSED_EDIT_SCHEME = `${ID}-proposed`;
 
 export const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download';
 export const OLLAMA_LIBRARY_URL = 'https://ollama.com/library';
@@ -30,6 +31,7 @@ export const COMMANDS = {
   askAboutFile: `${ID}.askAboutFile`,
   askAboutWorkspace: `${ID}.askAboutWorkspace`,
   toggleInterviewMode: `${ID}.toggleInterviewMode`,
+  switchChatMode: `${ID}.switchChatMode`,
   selectModel: `${ID}.selectModel`,
   downloadModel: `${ID}.downloadModel`,
   checkOllama: `${ID}.checkOllama`,

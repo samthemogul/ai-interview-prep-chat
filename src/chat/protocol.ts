@@ -4,6 +4,25 @@
  */
 
 export type Mode = 'guarded' | 'normal';
+export type ChatMode = 'ask' | 'plan' | 'agent';
+
+export type EditStatus = 'pending' | 'accepted' | 'rejected' | 'failed' | 'reverted' | 'expired';
+
+/** A file edit proposed by the AI in Agent mode, as shown in an edit card. */
+export interface UiEdit {
+  id: string;
+  path: string;
+  status: EditStatus;
+  isNew: boolean;
+  inferredPath: boolean;
+  added: number;
+  removed: number;
+  preview: Array<{ t: '+' | '-' | ' ' | '…'; s: string }>;
+  diffOpened: boolean;
+  error?: string;
+}
+
+export type EditAction = 'diff' | 'accept' | 'reject' | 'revert';
 
 export type OllamaState =
   | 'checking'
@@ -26,6 +45,7 @@ export interface UiMessage {
   role: 'user' | 'assistant';
   text: string;
   mode: Mode;
+  chatMode?: ChatMode;
   status: MessageStatus;
   /** Context labels ("Using context from"). Assistant messages only. */
   sources: string[];
@@ -38,6 +58,8 @@ export interface UiMessage {
   model?: string;
   /** True for the most recent assistant message (retry is offered there). */
   retryable?: boolean;
+  /** File edits proposed in this message (Agent mode). Placeholders in `text` point at them. */
+  edits?: UiEdit[];
 }
 
 export interface Chips {
@@ -48,6 +70,7 @@ export interface Chips {
 
 export interface ViewState {
   mode: Mode;
+  chatMode: ChatMode;
   model: string | undefined;
   models: UiModel[];
   ollama: { state: OllamaState; version?: string; endpoint: string; isLocal: boolean };
@@ -83,6 +106,9 @@ export type WebviewToHost =
   | { type: 'selectModel'; name: string }
   | { type: 'refreshModels' }
   | { type: 'setMode'; mode: Mode }
+  | { type: 'setChatMode'; chatMode: ChatMode }
+  | { type: 'editAction'; messageId: string; editId: string; action: EditAction }
+  | { type: 'implementPlan'; messageId: string }
   | { type: 'setChip'; chip: keyof Chips; value: boolean }
   | { type: 'completeOnboarding'; mode: Mode }
   | { type: 'checkOllama' }

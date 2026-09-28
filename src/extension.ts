@@ -8,6 +8,7 @@ import { registerCommands, TranscriptContentProvider } from './commands/commands
 import { ContextRetriever } from './context/ContextRetriever';
 import { WorkspaceIndexer } from './context/WorkspaceIndexer';
 import { VscodeHost, readSettings } from './host/VscodeHost';
+import { VscodeEditHost } from './host/VscodeEditHost';
 import { TranscriptStore } from './interview/TranscriptStore';
 import type { Settings } from './settings/settings';
 import { SETTING_KEYS, isLocalEndpoint } from './settings/settings';
@@ -33,12 +34,16 @@ export function activate(context: vscode.ExtensionContext): void {
   const host = new VscodeHost(context, indexer, transcripts, logger);
   const state = ChatState.restore(context.workspaceState.get(STATE_KEYS.conversation), () => randomUUID());
 
+  const editHost = new VscodeEditHost(indexer);
+  context.subscriptions.push(editHost);
+
   controller = new ChatController({
     host,
     state,
     source: indexer,
     retriever: new ContextRetriever(indexer),
     logger,
+    edits: editHost,
   });
 
   const provider = new ChatViewProvider(context.extensionUri, controller, host, indexer, logger);

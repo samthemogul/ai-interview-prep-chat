@@ -1,9 +1,10 @@
-import type { InterviewMode } from '../interview/InterviewMode';
+import type { ChatMode, InterviewMode } from '../interview/InterviewMode';
 
 export interface Settings {
   ollamaEndpoint: string;
   model: string;
   mode: InterviewMode;
+  chatMode: ChatMode;
   maxContextFiles: number;
   maxContextCharacters: number;
   contextWindow: number;
@@ -18,6 +19,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ollamaEndpoint: 'http://localhost:11434',
   model: '',
   mode: 'guarded',
+  chatMode: 'ask',
   maxContextFiles: 5,
   maxContextCharacters: 12000,
   contextWindow: 8192,
@@ -70,6 +72,7 @@ export function normalizeSettings(raw: Partial<Record<keyof Settings, unknown>>)
     ollamaEndpoint: normalizeEndpoint(endpointRaw) ?? endpointRaw.trim(),
     model: typeof raw.model === 'string' ? raw.model.trim() : d.model,
     mode: raw.mode === 'normal' ? 'normal' : 'guarded',
+    chatMode: raw.chatMode === 'plan' || raw.chatMode === 'agent' ? raw.chatMode : 'ask',
     maxContextFiles: clampInt(raw.maxContextFiles, 0, 20, d.maxContextFiles),
     maxContextCharacters: clampInt(raw.maxContextCharacters, 1000, 200000, d.maxContextCharacters),
     contextWindow: clampInt(raw.contextWindow, 2048, 131072, d.contextWindow),

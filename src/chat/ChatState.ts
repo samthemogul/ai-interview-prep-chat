@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../ollama/OllamaClient';
-import type { Chips, Mode, UiMessage } from './protocol';
+import type { ChatMode, Chips, Mode, UiEdit, UiMessage } from './protocol';
 
 /** A conversation message as stored. Never contains repository context. */
 export interface StoredMessage extends UiMessage {
@@ -30,7 +30,18 @@ export class ChatState {
     if (data?.version === 1 && Array.isArray(data.messages)) {
       state.messages = data.messages
         .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
-        .map((m) => (m.status === 'streaming' ? { ...m, status: 'stopped' as const } : m));
+        .map((m) => (m.status === 'streaming' ? { ...m, status: 'stopped' as const } : m))
+        // Pending edit proposals can't survive a reload: their proposed content isn't stored.
+        .map((m) =>
+          m.edits
+            ? {
+                ...m,
+                edits: m.edits.map((e) =>
+                  e.status === 'pending' ? { ...e, status: 'expired' as const } : e,
+                ),
+              }
+            : m,
+        );
     }
     return state;
   }
@@ -90,7 +101,7 @@ export class ChatState {
       if (m.role === 'user') {
         out.push({ role: 'user', content: m.modelText ?? m.text });
       } else if (m.status === 'done' && m.text.trim()) {
-        out.push({ role: 'assistant', content: m.text });
+        out.push({ role: 'assistant', content: describeEdits(m.text, m.edits) });
       } else {
         // Drop the unanswered user turn so roles keep alternating.
         if (out.length && out[out.length - 1]!.role === 'user') out.pop();
@@ -111,6 +122,7 @@ export class ChatState {
       role: m.role,
       text: m.text,
       mode: m.mode as Mode,
+      chatMode: m.chatMode as ChatMode | undefined,
       status: m.status,
       sources: m.sources,
       notes: m.notes,
@@ -119,6 +131,27 @@ export class ChatState {
       approach: m.approach,
       model: m.model,
       retryable: i === lastAssistant && m.status !== 'streaming',
+      edits: m.edits,
     }));
   }
+
+  updateEdit(messageId: string, edit: UiEdit): void {
+    const m = this.get(messageId);
+    if (!m) return;
+    const edits = m.edits ?? [];
+    const i = edits.findIndex((e) => e.id === edit.id);
+    if (i >= 0) edits[i] = edit;
+    else edits.push(edit);
+    m.edits = edits;
+  }
+}
+
+/** Replaces edit-card placeholders with a short description the model can understand. */
+export function describeEdits(text: string, edits: UiEdit[] | undefined): string {
+  return text.replace(/^%%EDIT:([\w-]+)%%$/gm, (_m, id: string) => {
+    const e = edits?.find((x) => x.id === id);
+    if (!e) return '';
+    const status = e.status === 'failed' ? `failed: ${e.error ?? 'could not be applied'}` : e.status;
+    return `[Proposed edit to ${e.path} (+${e.added} −${e.removed}): ${status}]`;
+  });
 }

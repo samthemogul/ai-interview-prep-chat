@@ -7,7 +7,12 @@ export interface GuardReport {
   approach: boolean;
   removed: RemovalReason[];
   shownBlocks: number;
+  /** Code blocks cut down to their new/changed lines because the model repeated the file. */
+  trimmedBlocks?: number;
 }
+
+/** While an approach block streams, allow long blocks so a repeated file can be trimmed afterwards. */
+const APPROACH_STREAM_CAP = 600;
 
 export interface OutputGuardOptions {
   /** False in Normal Mode: text passes through untouched. */
@@ -62,6 +67,9 @@ export class OutputGuard {
   private readonly removed: RemovalReason[] = [];
   private readonly referenceTokens: Array<Set<string>>;
   private readonly referenceLines: Set<string>;
+  /** Every non-blank reference line, for trimming repeated files down to what changed. */
+  private readonly referenceAll: Set<string>;
+  private trimmedBlocks = 0;
 
   constructor(private readonly opts: OutputGuardOptions) {
     const refs = (opts.referenceTexts ?? []).map(stripLineNumbers);
@@ -74,10 +82,16 @@ export class OutputGuard {
           .filter((l) => l.length >= 12),
       ),
     );
+    this.referenceAll = new Set(refs.flatMap((r) => r.split('\n').map(normalizeLine).filter(Boolean)));
   }
 
   get report(): GuardReport {
-    return { approach: this.approach, removed: [...this.removed], shownBlocks: this.shownBlocks };
+    return {
+      approach: this.approach,
+      removed: [...this.removed],
+      shownBlocks: this.shownBlocks,
+      trimmedBlocks: this.trimmedBlocks,
+    };
   }
 
   /** Feeds a streamed chunk; returns the text that is now safe to display. */
@@ -172,14 +186,25 @@ export class OutputGuard {
   }
 
   private currentLineCap(): number {
-    return this.approach ? APPROACH_LINE_CAP - this.approachLinesUsed : GUARDED_EXAMPLE_LINE_CAP;
+    return this.approach ? APPROACH_STREAM_CAP : GUARDED_EXAMPLE_LINE_CAP;
   }
 
   private closeBlock(): string {
     this.inCode = false;
-    const reason = this.evaluate();
-    const lines = this.codeLines;
+    let reason = this.evaluate();
+    let lines = this.codeLines;
     this.codeLines = [];
+    let note = '';
+    if (!reason && this.approach) {
+      // Small models often repeat the whole file; keep only what is new or changed.
+      const trimmed = trimToChanges(lines, this.referenceAll);
+      if (trimmed) {
+        lines = trimmed;
+        this.trimmedBlocks++;
+        note = '> Showing only the new and changed lines.\n\n';
+      }
+      if (lines.length > APPROACH_LINE_CAP - this.approachLinesUsed) reason = 'approach-limit';
+    }
     if (reason) {
       this.removed.push(reason);
       return `\n> ${NOTICES[reason]}\n\n`;
@@ -188,7 +213,7 @@ export class OutputGuard {
     if (this.approach) this.approachLinesUsed += lines.length;
     // Unclosed blocks (stream ended or stopped) get a closing fence so Markdown stays valid.
     const fence = this.fenceChar.repeat(this.fenceLen);
-    return `${this.openLine}\n${lines.join('\n')}${lines.length ? '\n' : ''}${fence}\n`;
+    return `${note}${this.openLine}\n${lines.join('\n')}${lines.length ? '\n' : ''}${fence}\n`;
   }
 
   private evaluate(): RemovalReason | undefined {
@@ -217,6 +242,53 @@ export class OutputGuard {
     }
     return false;
   }
+}
+
+/**
+ * When most lines of a block already exist in the candidate's code, returns only the new or
+ * changed lines (with one line of context and "..." between hunks). Returns undefined when
+ * the block is mostly new code and should be shown as is.
+ */
+export function trimToChanges(lines: string[], known: ReadonlySet<string>): string[] | undefined {
+  if (lines.length < 12 || known.size === 0) return undefined;
+  const isNew = lines.map((l) => {
+    const n = normalizeLine(l);
+    return n.length > 0 && !known.has(n);
+  });
+  const nonBlank = lines.filter((l) => l.trim()).length;
+  const newCount = isNew.filter(Boolean).length;
+  if (newCount === 0 || (nonBlank - newCount) / nonBlank < 0.5) return undefined;
+
+  const keep = isNew.slice();
+  // Keep blank lines that sit inside a run of new code.
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.trim()) continue;
+    let a = i - 1;
+    while (a >= 0 && !lines[a]!.trim()) a--;
+    let b = i + 1;
+    while (b < lines.length && !lines[b]!.trim()) b++;
+    if (a >= 0 && b < lines.length && isNew[a] && isNew[b]) keep[i] = true;
+  }
+  // One line of existing code as context on each side of a change.
+  const withContext = keep.slice();
+  for (let i = 0; i < lines.length; i++) {
+    if (!keep[i]) continue;
+    for (const j of [i - 1, i + 1]) {
+      if (j >= 0 && j < lines.length && lines[j]!.trim()) withContext[j] = true;
+    }
+  }
+  const out: string[] = [];
+  let gap = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (withContext[i]) {
+      if (gap && out.length) out.push('...');
+      out.push(lines[i]!);
+      gap = false;
+    } else {
+      gap = true;
+    }
+  }
+  return out;
 }
 
 /** Detects unified-diff style output: hunk headers or mostly +/- prefixed lines. */

@@ -1,4 +1,14 @@
-import type { Chips, HostToWebview, Mode, UiMessage, ViewState, WebviewToHost } from '../../chat/protocol';
+import type {
+  ChatMode,
+  Chips,
+  EditAction,
+  HostToWebview,
+  Mode,
+  UiEdit,
+  UiMessage,
+  ViewState,
+  WebviewToHost,
+} from '../../chat/protocol';
 import { escapeHtml, renderMarkdown } from './markdown';
 
 interface VsCodeApi {
@@ -36,7 +46,10 @@ function mountSkeleton(): void {
     <div class="banner-area" id="banners"></div>
     <main class="main" id="main" tabindex="-1"></main>
     <footer class="composer" id="composer">
-      <div class="chips" id="chips" role="group" aria-label="Context to include"></div>
+      <div class="composer-bar">
+        <div class="segmented small" id="chat-modes" role="radiogroup" aria-label="Chat mode"></div>
+        <div class="chips" id="chips" role="group" aria-label="Context to include"></div>
+      </div>
       <div class="input-wrap">
         <textarea id="input" rows="1" placeholder="Ask about this codebase…  (@file, @selection, @workspace, @diagnostics)" aria-label="Message"></textarea>
         <button class="send-btn" id="send" data-action="send" title="Send (Enter)" aria-label="Send">${icon('send')}</button>
@@ -119,7 +132,7 @@ function renderHeader(): void {
     <div class="header-row controls">
       <div class="segmented" role="radiogroup" aria-label="Assistant mode">
         <button role="radio" aria-checked="${s.mode === 'guarded'}" class="${s.mode === 'guarded' ? 'active' : ''}" data-action="set-mode" data-mode="guarded" title="Guarded Interview Mode">${icon('shield')} Guarded</button>
-        <button role="radio" aria-checked="${s.mode === 'normal'}" class="${s.mode === 'normal' ? 'active warn' : ''}" data-action="set-mode" data-mode="normal" title="Normal Mode (no interview guard)">${icon('unlock')} Normal</button>
+        <button role="radio" aria-checked="${s.mode === 'normal'}" class="${s.mode === 'normal' ? 'active warn' : ''}" data-action="set-mode" data-mode="normal" title="Unguarded Mode (no interview guard)">${icon('unlock')} Unguarded</button>
       </div>
       <div class="model-picker">
         <select id="model-select" aria-label="Model" ${s.models.length ? '' : 'disabled'}>${modelOptions}</select>
@@ -188,7 +201,7 @@ function renderBanners(): void {
     out.push(
       banner(
         'warn',
-        '<strong>Normal Mode</strong>: no interview guard. The AI can write the solution for you.',
+        '<strong>Unguarded Mode</strong>: no interview guard. The AI can write the solution for you.',
         `<button class="btn secondary" data-action="set-mode" data-mode="guarded">${icon('shield')} Back to Guarded</button>`,
       ),
     );
@@ -234,13 +247,9 @@ function renderEmpty(): string {
   ];
   return `
     <div class="empty">
-      <div class="empty-icon">${icon(s.mode === 'guarded' ? 'shield' : 'comment-discussion')}</div>
-      <h2>${s.mode === 'guarded' ? 'Guarded Interview Mode' : 'Normal Mode'}</h2>
-      <p class="muted">${
-        s.mode === 'guarded'
-          ? 'The AI explains code, errors and concepts and helps you navigate. It won’t solve the task for you, but it will write code for an approach you describe.'
-          : 'The AI behaves like an ordinary coding assistant.'
-      }</p>
+      <div class="empty-icon">${icon(s.mode === 'guarded' ? 'shield' : 'unlock')}</div>
+      <h2>${s.mode === 'guarded' ? 'Guarded' : 'Unguarded'} · ${CHAT_MODE_NAMES[s.chatMode]}</h2>
+      <p class="muted">${escapeHtml(emptyDescription(s.mode, s.chatMode))}</p>
       <div class="examples">
         ${examples.map((e) => `<button class="example" data-action="example" data-prompt="${escapeHtml(e)}">${icon('lightbulb')}<span>${escapeHtml(e)}</span></button>`).join('')}
       </div>
@@ -253,6 +262,41 @@ function renderEmpty(): string {
       ${s.hasWorkspace ? '' : `<p class="muted small">${icon('folder')} Open a folder to ask about a codebase.</p>`}
       <p class="privacy small">${icon('lock')} ${escapeHtml(s.privacy)}</p>
     </div>`;
+}
+
+const CHAT_MODE_NAMES: Record<ChatMode, string> = { ask: 'Ask', plan: 'Plan', agent: 'Agent' };
+const CHAT_MODE_ICONS: Record<ChatMode, string> = { ask: 'comment', plan: 'checklist', agent: 'tools' };
+const CHAT_MODE_TITLES: Record<ChatMode, string> = {
+  ask: 'Ask: questions and answers. The AI never touches your files.',
+  plan: 'Plan: build an implementation plan before writing code.',
+  agent: 'Agent: the AI proposes file edits you review as a diff and accept or reject.',
+};
+
+function emptyDescription(mode: Mode, chatMode: ChatMode): string {
+  if (mode === 'guarded') {
+    if (chatMode === 'plan') {
+      return 'Outline your plan and the AI reviews it with questions. It won’t write the plan or the solution for you.';
+    }
+    if (chatMode === 'agent') {
+      return 'Describe how to do something and the AI edits your files to implement exactly that. You review each edit as a diff. It won’t solve the task for you.';
+    }
+    return 'The AI explains code, errors and concepts and helps you navigate. It won’t solve the task for you, but it will write code for an approach you describe.';
+  }
+  if (chatMode === 'plan') {
+    return 'The AI drafts and refines an implementation plan with you. When it looks right, hand it to the agent.';
+  }
+  if (chatMode === 'agent') {
+    return 'The AI edits your files. Every change is shown as a diff that you accept or reject.';
+  }
+  return 'The AI behaves like an ordinary coding assistant and can solve the task for you.';
+}
+
+function placeholderFor(mode: Mode, chatMode: ChatMode): string {
+  if (chatMode === 'plan') return mode === 'guarded' ? 'Outline your plan…' : 'What should we plan?';
+  if (chatMode === 'agent') {
+    return mode === 'guarded' ? 'Describe the change and how to do it…' : 'What should the agent change?';
+  }
+  return 'Ask about this codebase…  (@file, @selection, @workspace, @diagnostics)';
 }
 
 function renderMessage(m: UiMessage): string {
@@ -269,7 +313,12 @@ function renderMessage(m: UiMessage): string {
     );
   } else {
     badges.push(
-      `<span class="badge warn" title="Answered without the interview guard">${icon('unlock')}Normal</span>`,
+      `<span class="badge warn" title="Answered without the interview guard">${icon('unlock')}Unguarded</span>`,
+    );
+  }
+  if (m.chatMode && m.chatMode !== 'ask') {
+    badges.push(
+      `<span class="badge">${icon(CHAT_MODE_ICONS[m.chatMode])}${CHAT_MODE_NAMES[m.chatMode]}</span>`,
     );
   }
   if (m.approach) {
@@ -298,6 +347,7 @@ function renderMessage(m: UiMessage): string {
       : `<div class="msg-actions">
           ${m.text ? `<button class="icon-btn" data-action="copy-message" data-id="${m.id}" title="Copy response" aria-label="Copy response">${icon('copy')}</button>` : ''}
           ${m.retryable ? `<button class="icon-btn" data-action="retry" data-id="${m.id}" title="Retry" aria-label="Retry">${icon('refresh')}</button>` : ''}
+          ${m.retryable && m.chatMode === 'plan' && m.mode === 'normal' && m.status === 'done' ? `<button class="btn small" data-action="implement-plan" data-id="${m.id}" title="Switch to Agent mode and implement this plan">${icon('tools')} Implement with Agent</button>` : ''}
           ${m.status === 'stopped' ? '<span class="tag">Stopped</span>' : ''}
         </div>`;
   const error =
@@ -317,12 +367,77 @@ function renderAssistantBody(m: UiMessage): string {
   if (m.status === 'streaming' && !m.text) {
     return `<div class="thinking"><span></span><span></span><span></span></div>`;
   }
-  if (m.status !== 'streaming') return renderMarkdown(m.text);
-  // Render a caret placeholder inline so the cursor sits at the end of the text being written.
-  return renderMarkdown(`${m.text}\u0001`, { streaming: true }).replace(
-    '\u0001',
-    '<span class="caret" aria-hidden="true"></span>',
-  );
+  const streaming = m.status === 'streaming';
+  // Split the text on edit placeholders; each placeholder becomes an edit card.
+  const parts = m.text.split(/^%%EDIT:([\w-]+)%%$/m);
+  let html = '';
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      html += renderEditCard(m, parts[i]!);
+      continue;
+    }
+    const segment = parts[i]!;
+    const last = i === parts.length - 1;
+    if (streaming && last) {
+      // Render a caret placeholder inline so the cursor sits at the end of the text being written.
+      html += renderMarkdown(`${segment}\u0001`, { streaming: true }).replace(
+        '\u0001',
+        '<span class="caret" aria-hidden="true"></span>',
+      );
+    } else if (segment.trim()) {
+      html += renderMarkdown(segment);
+    }
+  }
+  return html;
+}
+
+const EDIT_STATUS: Record<UiEdit['status'], { label: string; icon: string; cls: string }> = {
+  pending: { label: 'Waiting for your review', icon: 'circle-large-outline', cls: 'pending' },
+  accepted: { label: 'Applied', icon: 'pass-filled', cls: 'ok' },
+  rejected: { label: 'Rejected', icon: 'circle-slash', cls: 'muted' },
+  reverted: { label: 'Reverted', icon: 'discard', cls: 'muted' },
+  failed: { label: 'Not applied', icon: 'error', cls: 'bad' },
+  expired: { label: 'Expired (proposed in an earlier session)', icon: 'history', cls: 'muted' },
+};
+
+function renderEditCard(m: UiMessage, editId: string): string {
+  const e = m.edits?.find((x) => x.id === editId);
+  if (!e) {
+    return `<div class="edit-card preparing">${icon('loading', 'codicon-modifier-spin')}<span>Preparing edit…</span></div>`;
+  }
+  const st = EDIT_STATUS[e.status];
+  const name = e.path.split('/').pop() ?? e.path;
+  const dir = e.path.includes('/') ? e.path.slice(0, e.path.lastIndexOf('/')) : '';
+  const btn = (action: EditAction, label: string, ic: string, cls = 'secondary') =>
+    `<button class="btn small ${cls}" data-action="edit" data-edit-action="${action}" data-msg="${m.id}" data-edit="${e.id}">${icon(ic)} ${label}</button>`;
+  const preview = e.preview.length
+    ? `<pre class="edit-preview">${e.preview
+        .map((l) =>
+          l.t === '…'
+            ? `<span class="ln skip">${escapeHtml(l.s || '…')}</span>`
+            : `<span class="ln ${l.t === '+' ? 'add' : l.t === '-' ? 'del' : 'ctx'}"><span class="sign">${l.t}</span>${escapeHtml(l.s) || ' '}</span>`,
+        )
+        .join('')}</pre>`
+    : '';
+  const actions =
+    e.status === 'pending'
+      ? `${btn('diff', 'Review diff', 'diff')}${btn('accept', 'Accept', 'check', '')}${btn('reject', 'Reject', 'close')}`
+      : e.status === 'accepted'
+        ? `${btn('diff', 'View diff', 'diff')}${btn('revert', 'Revert', 'discard')}`
+        : '';
+  return `<div class="edit-card ${st.cls}" data-edit-id="${e.id}">
+    <div class="edit-head">
+      ${icon(e.isNew ? 'new-file' : 'edit')}
+      <button class="link-btn file" data-action="open-file" data-path="${escapeHtml(e.path)}" title="${escapeHtml(e.path)}">${escapeHtml(name)}</button>
+      ${dir ? `<span class="muted small">${escapeHtml(dir)}</span>` : ''}
+      ${e.added || e.removed ? `<span class="counts"><span class="add">+${e.added}</span> <span class="del">−${e.removed}</span></span>` : ''}
+      <span class="edit-status ${st.cls}" title="${escapeHtml(st.label)}">${icon(st.icon)}<span>${escapeHtml(st.label)}</span></span>
+    </div>
+    ${e.inferredPath ? `<div class="note">${icon('info')}<span>The model didn't name a file, so this edit targets <code>${escapeHtml(e.path)}</code>.</span></div>` : ''}
+    ${e.error ? `<div class="note warn-text">${icon('warning')}<span>${escapeHtml(e.error)}</span></div>` : ''}
+    ${preview}
+    ${actions ? `<div class="edit-actions">${actions}</div>` : ''}
+  </div>`;
 }
 
 function renderSource(label: string): string {
@@ -377,7 +492,16 @@ function renderComposer(): void {
   $('#status')!.innerHTML = `
     <span class="${s.ollama.isLocal ? '' : 'warn-text'}" title="${escapeHtml(s.privacy)}">${icon(s.ollama.isLocal ? 'lock' : 'globe')}${s.ollama.isLocal ? 'Local' : 'Remote'}</span>
     <span class="sep">·</span><span class="${connected ? '' : 'warn-text'}">${connected ? model : 'Ollama offline'}</span>
-    <span class="sep">·</span><span class="${s.mode === 'normal' ? 'warn-text' : ''}">${s.mode === 'guarded' ? 'Guarded' : 'Normal'}</span>`;
+    <span class="sep">·</span><span class="${s.mode === 'normal' ? 'warn-text' : ''}">${s.mode === 'guarded' ? 'Guarded' : 'Unguarded'}</span>
+    <span class="sep">·</span><span>${CHAT_MODE_NAMES[s.chatMode]}</span>`;
+  $('#chat-modes')!.innerHTML = (['ask', 'plan', 'agent'] as ChatMode[])
+    .map(
+      (cm) =>
+        `<button role="radio" aria-checked="${s.chatMode === cm}" class="${s.chatMode === cm ? 'active' : ''}" data-action="set-chat-mode" data-chat-mode="${cm}" title="${escapeHtml(CHAT_MODE_TITLES[cm])}">${icon(CHAT_MODE_ICONS[cm])} ${CHAT_MODE_NAMES[cm]}</button>`,
+    )
+    .join('');
+  const input = $<HTMLTextAreaElement>('#input');
+  if (input) input.placeholder = placeholderFor(s.mode, s.chatMode);
   updateSendButton();
 }
 
@@ -486,7 +610,7 @@ function renderOnboarding(): string {
           <button role="radio" aria-checked="${onboardingMode === 'guarded'}" class="ob-option ${onboardingMode === 'guarded' ? 'selected' : ''}" data-action="ob-mode" data-mode="guarded">
             ${icon('shield')}<span class="ob-option-text"><strong>Guarded Interview Mode <span class="badge ok">Recommended</span></strong><span class="muted">Explains code, errors and concepts and helps you navigate. Won’t solve the task, but writes code for approaches you describe.</span></span></button>
           <button role="radio" aria-checked="${onboardingMode === 'normal'}" class="ob-option ${onboardingMode === 'normal' ? 'selected' : ''}" data-action="ob-mode" data-mode="normal">
-            ${icon('unlock')}<span class="ob-option-text"><strong>Normal Mode</strong><span class="muted">An ordinary coding assistant. Good for learning, not for interview practice.</span></span></button>
+            ${icon('unlock')}<span class="ob-option-text"><strong>Unguarded Mode</strong><span class="muted">An ordinary coding assistant that can solve the task, like the unguarded Code Repos assistant in real assessments.</span></span></button>
         </div>
         <p class="muted small">You can switch modes any time from the header.</p>
         <div class="ob-actions">${back}<button class="btn" data-action="ob-finish">Finish</button></div>`;
@@ -556,7 +680,13 @@ document.addEventListener('click', (e) => {
     case 'copy-message': {
       const m = state?.messages.find((x) => x.id === target.dataset.id);
       if (m) {
-        post({ type: 'copy', text: m.text });
+        post({
+          type: 'copy',
+          text: m.text
+            .replace(/^%%EDIT:[\w-]+%%$/gm, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim(),
+        });
         flash(target);
       }
       break;
@@ -569,6 +699,21 @@ document.addEventListener('click', (e) => {
       }
       break;
     }
+    case 'set-chat-mode': {
+      const cm = target.dataset.chatMode;
+      if (cm === 'ask' || cm === 'plan' || cm === 'agent') post({ type: 'setChatMode', chatMode: cm });
+      break;
+    }
+    case 'edit': {
+      const a = target.dataset.editAction as EditAction | undefined;
+      if (a && target.dataset.msg && target.dataset.edit) {
+        post({ type: 'editAction', messageId: target.dataset.msg, editId: target.dataset.edit, action: a });
+      }
+      break;
+    }
+    case 'implement-plan':
+      post({ type: 'implementPlan', messageId: target.dataset.id ?? '' });
+      break;
     case 'retry':
       post({ type: 'retry', id: target.dataset.id! });
       break;

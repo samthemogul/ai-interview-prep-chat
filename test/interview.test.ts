@@ -70,7 +70,7 @@ describe('solution-request detection', () => {
     const c = classifyRequest(text);
     expect(c.likelySolutionRequest).toBe(true);
     expect(c.describesApproach).toBe(false);
-    expect(turnReminder(c)).toMatch(/Do not write code/);
+    expect(turnReminder(c)).toMatch(/do not write code/i);
   });
 
   it.each([
@@ -135,7 +135,7 @@ describe('output guard', () => {
     const g = guarded();
     const { shown } = streamThrough(text, g);
     expect(shown).toContain('HashMap::new()');
-    expect(g.report).toEqual({ approach: false, removed: [], shownBlocks: 1 });
+    expect(g.report).toMatchObject({ approach: false, removed: [], shownBlocks: 1 });
   });
 
   it('removes code blocks over the 5-line cap', () => {
