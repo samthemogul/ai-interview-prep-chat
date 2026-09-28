@@ -701,7 +701,7 @@ describe('Agent mode', () => {
     expect(msg.text).not.toContain('[APPROACH]');
   });
 
-  it('describes previous edits to the model instead of placeholders', async () => {
+  it('describes previous edits to the model as plain narration, not an imitable tag', async () => {
     const { host, controller, ollama } = setupModes(() => EDIT_REPLY, { mode: 'normal', chatMode: 'agent' });
     await controller.refreshOllama();
     await controller.send('add a get one user endpoint', NO_CHIPS);
@@ -709,9 +709,12 @@ describe('Agent mode', () => {
     await controller.editAction(msg.id, msg.edits![0]!.id, 'accept');
     await controller.send('now add a delete endpoint', NO_CHIPS);
     const history = ollama.chatRequests[1]!.messages.filter((m: ChatMessage) => m.role === 'assistant');
-    expect(history[0]!.content).toContain('[Proposed edit to pyserver.py (+');
-    expect(history[0]!.content).toContain('accepted]');
+    // A small model copies a machine-looking "[Proposed edit … : accepted]" line verbatim
+    // instead of writing new code, so history must not contain it.
+    expect(history[0]!.content).not.toContain('[Proposed edit');
+    expect(history[0]!.content).not.toContain('accepted]');
     expect(history[0]!.content).not.toContain('%%EDIT');
+    expect(history[0]!.content).toContain('(I edited pyserver.py.)');
   });
 
   it('uses the agent system prompt with the edit format', async () => {

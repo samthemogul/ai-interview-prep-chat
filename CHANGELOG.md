@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.5] - 2026-09-28
+
+### Fixed
+
+- **A second edit in the same chat now works.** Past edits were described back to the model as a structured tag (`[Proposed edit to file (+6 −0): accepted]`). Small models copied that line verbatim on the next turn instead of writing new code, so the follow-up "edit" was just narration and nothing changed. Past edits are now described to the model as plain narration (`(I edited pyserver.py.)`), and the Agent prompt states that every change must be a real code block — a note is not an edit. The current file contents, sent fresh each turn, remain what tells the model what already changed.
+
 ## [0.2.4] - 2026-09-28
 
 ### Fixed

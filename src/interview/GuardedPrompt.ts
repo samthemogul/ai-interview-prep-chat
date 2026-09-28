@@ -50,6 +50,7 @@ Rules for changes:
 - To create a new file, use the new path.
 - For precise replacements you may instead use a SEARCH/REPLACE block: <<<<<<< SEARCH, the exact existing lines, =======, the new lines, >>>>>>> REPLACE.
 - The user reviews every change as a diff and decides whether to accept it. Nothing changes until they accept, so never claim a change has been made.
+- Every change you make MUST be a real code block (or SEARCH/REPLACE block) in this format. Never reply with only a note such as "I edited pyserver.py" or "[Proposed edit …]" — a note without a code block changes nothing. Each request needs its own new code block, even if you made a similar edit earlier.
 - You cannot run commands or tests. After the code, add at most one short sentence.`;
 
 const GUARDED_CORE = `You are an AI assistant helping a candidate during a software engineering interview. You are a conceptual mentor, not a code generator.
