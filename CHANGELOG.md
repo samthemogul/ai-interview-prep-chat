@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.7] - 2026-09-28
+
+### Fixed
+
+- **The agent no longer derails into repeating the prompt.** Several turns into a chat, a weak model could stop answering and start autocompleting the context format instead — reprinting `</workspace_context>`, headings like `Relevant snippet:`, and a fresh `Candidate's message:`, and even turning context snippets (env vars, other files' code) into bogus edits. The response stream is now cut the moment any of that scaffolding appears, so the reprinted context and the junk edits after it never reach the chat.
+
 ## [0.2.6] - 2026-09-28
 
 ### Fixed
