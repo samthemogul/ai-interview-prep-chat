@@ -281,9 +281,18 @@ export function applyBlock(original: string | undefined, code: string, opts: Pla
     if (plan) {
       const next = plan.ops.length ? applyOps(lines, plan.ops) : lines;
       if (next) {
-        const note = plan.keptUnchanged.length
-          ? `Left ${plan.keptUnchanged.map((n) => `\`${n}\``).join(', ')} as it was (not part of your request).`
-          : undefined;
+        const notes: string[] = [];
+        if (plan.alsoChanged.length) {
+          notes.push(
+            `Also updated ${plan.alsoChanged.map((n) => `\`${n}\``).join(', ')} (the model changed it too).`,
+          );
+        }
+        if (plan.keptUnchanged.length) {
+          notes.push(
+            `Left ${plan.keptUnchanged.map((n) => `\`${n}\``).join(', ')} as it was (not part of your request).`,
+          );
+        }
+        const note = notes.length ? notes.join(' ') : undefined;
         if (next === lines || next.join('\n') === lines.join('\n')) return noop;
         return spanResult(lines, next, crlf, note);
       }

@@ -632,7 +632,9 @@ export class ChatController {
       const messages = buildMessages({
         mode,
         chatMode,
-        history: chatMode === 'agent' ? history.slice(-4) : history,
+        // Agent mode keeps only the last exchange: the file is re-sent fresh each turn, and a
+        // long history of prior turns is what a weak model starts echoing instead of editing.
+        history: chatMode === 'agent' ? history.slice(-2) : history,
         userText: refs.text,
         context: contextItems,
         turnNote: mode === 'guarded' ? turnReminder(classification, chatMode) : undefined,

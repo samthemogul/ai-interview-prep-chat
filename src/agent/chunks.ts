@@ -355,6 +355,8 @@ export interface ChunkPlan {
   ops: Op[];
   /** Names of changed definitions that were left alone because they weren't requested. */
   keptUnchanged: string[];
+  /** Names of existing functions the model also rewrote and that were applied. */
+  alsoChanged: string[];
 }
 
 function mentioned(request: string | undefined, chunk: Chunk): boolean {
@@ -414,15 +416,36 @@ export function planChunks(
 
   const hasNew = located.some((l) => l.status === 'new');
   const changed = located.filter((l) => l.status === 'changed');
-  const named = changed.filter((l) => mentioned(opts.request, l.chunk));
-  // Without anything new, a pure modification applies, unless the request was to add
-  // something (then the block is an echo with incidental rewrites) or it names what to change.
+  // A definition or class the model genuinely rewrote is applied — it changed it on purpose,
+  // and silently dropping it (the old behaviour) hid edits the user actually wanted. Only
+  // fuzzily-identical defs are treated as unchanged and skipped, so a real rewrite always
+  // comes through.
+  const changedDefs = changed.filter((l) => l.chunk.kind === 'def');
+  // Assignments and loose statements (e.g. `client = pymongo.MongoClient(...)`) are usually
+  // incidental rewrites from a whole-file echo, so they apply only when the request names
+  // them, or when the block is a pure edit with nothing new.
+  const changedRest = changed.filter((l) => l.chunk.kind !== 'def');
+  const namedRest = changedRest.filter((l) => mentioned(opts.request, l.chunk));
   const asksToAdd = !!opts.request && /\b(add|create|new|implement|write|insert)\b/i.test(opts.request);
-  const applyChanged = hasNew || asksToAdd ? named : named.length ? named : changed;
-  const keptUnchanged = changed
-    .filter((l) => !applyChanged.includes(l))
+  // A block that also echoes unchanged code is a whole-file dump, so its changed assignments
+  // are almost always incidental (an import-style rewrite of a setup line) — apply those only
+  // when named. Only in a focused edit (nothing echoed, nothing new) do we apply them all.
+  const echoed = located.some((l) => l.status === 'same');
+  const applyRest = hasNew || asksToAdd || echoed ? namedRest : namedRest.length ? namedRest : changedRest;
+  const applyChanged = [...changedDefs, ...applyRest];
+  const keptUnchanged = changedRest
+    .filter((l) => !applyRest.includes(l))
     .map((l) => l.chunk.name!)
     .filter(Boolean);
+  // When the request was to ADD something but the model also rewrote an existing function,
+  // apply that rewrite (don't silently drop it) but flag it so the user notices in the diff.
+  const alsoChanged =
+    hasNew || asksToAdd
+      ? changedDefs
+          .filter((l) => !mentioned(opts.request, l.chunk))
+          .map((l) => l.chunk.name!)
+          .filter(Boolean)
+      : [];
 
   const ops: Op[] = [];
   const applied: string[] = [];
@@ -483,7 +506,7 @@ export function planChunks(
       applied.join('\n'),
     ),
   );
-  return { ops, keptUnchanged };
+  return { ops, keptUnchanged, alsoChanged };
 }
 
 /** Applies non-overlapping operations (bottom-up so indices stay valid). */

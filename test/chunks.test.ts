@@ -172,15 +172,20 @@ describe('whole-file replies that change existing code', () => {
     expect(count(c, 'from fastapi import')).toBe(1);
   });
 
-  it('leaves an existing function alone when a new one is added and it was not asked for', () => {
+  it('applies a function the model also rewrote, and flags it rather than dropping it silently', () => {
     const reply = WHOLE_FILE_REPLY.replace(
       '    result = users.find()\n    all_users = []\n    for user in result:\n        all_users.append(serialize(user))\n    return all_users',
       '    return [serialize(u) for u in users.find()]',
     );
     const r = applyBlock(FILE, reply, { request: 'add an endpoint to get one user' });
     const c = r.ok ? r.content : '';
-    expect(c).toContain('all_users.append(serialize(user))');
+    // The genuine rewrite is applied (not silently dropped), and the new endpoint is added.
+    expect(c).toContain('return [serialize(u) for u in users.find()]');
+    expect(c).not.toContain('all_users.append(serialize(user))');
+    expect(c).toContain('def get_user(');
+    // The user is told an existing function was also changed, so it's not a surprise.
     expect(r.ok && r.note).toContain('`get_all_users`');
+    expect(r.ok && r.note).toMatch(/Also updated/i);
   });
 
   it('treats a whole-file echo as no change', () => {
@@ -283,5 +288,68 @@ describe('whole-file replies in TypeScript', () => {
     expect(c).not.toContain('// Get one user');
     expect(c.indexOf("'/users/:id'")).toBeLessThan(c.indexOf('export function start'));
     expect(c.indexOf("'/users/:id'")).toBeGreaterThan(c.indexOf("app.get('/users',"));
+  });
+});
+
+describe('applying a genuinely rewritten function alongside new code (the create_user case)', () => {
+  const BASE = [
+    'from fastapi import FastAPI',
+    'from pydantic import BaseModel',
+    '',
+    'app = FastAPI()',
+    'users = db["users"]',
+    '',
+    'class User(BaseModel):',
+    '    name: str',
+    '    email: str',
+    '',
+    '@app.post("/create", status_code=201)',
+    'def create_user(user: User):',
+    '    result = users.insert_one(user.model_dump())',
+    '    return {"message": "added"}',
+    '',
+  ].join('\n');
+
+  it('applies the model-rewritten create_user and the new School class/endpoint', () => {
+    const reply = [
+      'from fastapi import FastAPI',
+      'from pydantic import BaseModel',
+      '',
+      'app = FastAPI()',
+      'users = db["users"]',
+      'school = db["school"]',
+      '',
+      'class User(BaseModel):',
+      '    name: str',
+      '    email: str',
+      '    school: dict = None',
+      '',
+      'class School(BaseModel):',
+      '    name: str',
+      '    address: str',
+      '',
+      '@app.post("/create", status_code=201)',
+      'def create_user(user: User):',
+      '    result = users.insert_one(user.model_dump())',
+      '    return {"message": "added", "id": str(result.inserted_id)}',
+      '',
+      '@app.post("/create_school", status_code=201)',
+      'def create_school(school: School):',
+      '    return {"message": "school added"}',
+      '',
+    ].join('\n');
+    const r = applyBlock(BASE, reply, {
+      request: 'add a school class and endpoint, and add a school for a user',
+    });
+    expect(r.ok).toBe(true);
+    const c = r.ok ? r.content : '';
+    // The rewritten create_user is applied, not dropped.
+    expect(c).toContain('"id": str(result.inserted_id)');
+    expect(c.split('def create_user(').length - 1).toBe(1);
+    // The new class and endpoint are added.
+    expect(c).toContain('class School(BaseModel):');
+    expect(c).toContain('def create_school(');
+    // The new collection assignment is added.
+    expect(c).toContain('school = db["school"]');
   });
 });

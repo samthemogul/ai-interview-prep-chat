@@ -184,7 +184,10 @@ export function turnReminder(
       chatMode === 'agent'
         ? 'write the file path on its own line and then a code block with only the new or changed code'
         : 'show only the new or changed code, not the whole file';
-    return `Turn note: the candidate may be describing an approach. If the message describes HOW to do it (steps, mechanism, data structure or control flow), implement exactly that approach: start your response with the line ${APPROACH_MARKER}, then ${how}. Do not add tests, examples, curl commands or anything they did not ask for. If it only states an outcome, or a real design decision is missing, do not write code: refuse briefly or ask for the missing decision.`;
+    // A firm instruction: the classifier already decided this describes an approach, so the
+    // model must implement it, not second-guess and refuse. Hedging here ("may be… if it…")
+    // let the model decline the same request it accepted a moment earlier.
+    return `Turn note: the candidate HAS described an approach (steps, mechanism, data structure or control flow), so implement exactly that approach now. Do NOT refuse, do NOT ask them to rephrase, and do NOT tell them to describe it — they already have. Start your response with the line ${APPROACH_MARKER}, then ${how}. Implement only what they described: no tests, examples, curl commands, extra endpoints or unrequested changes. Only ask a question if a concrete design decision they gave you is genuinely missing (never as a way to avoid writing the code).`;
   }
   if (c.likelySolutionRequest) {
     return `Turn note: this message asks for code or a solution without describing an approach. ${SHORT_REFUSAL}`;
