@@ -42,6 +42,7 @@ import {
   turnReminder,
 } from '../interview/RequestClassifier';
 import { ProseLimiter, wantsDetail } from '../interview/Brevity';
+import { PromptLeakFilter } from '../interview/PromptLeak';
 import { shortenRefusal } from '../interview/Refusal';
 import { requiresConfirmation, otherMode, MODE_LABELS } from '../interview/InterviewMode';
 import type { TranscriptSession } from '../interview/Transcript';
@@ -482,6 +483,9 @@ export class ChatController {
         : approachRequested);
     const wantsTests = asksForTests(classification.text);
     let droppedTests = false;
+    // Stops the model when it starts echoing the prompt scaffolding instead of answering.
+    const leak = new PromptLeakFilter();
+    let leaked = false;
     const extractor =
       chatMode === 'agent'
         ? new EditBlockExtractor(
@@ -524,7 +528,9 @@ export class ChatController {
       }
     };
     const emit = (raw: string) => {
-      const text = extractor ? extractor.push(raw) : raw;
+      const safe = leak.push(raw);
+      if (leak.tripped) leaked = true;
+      const text = extractor ? extractor.push(safe) : safe;
       show(text ? activeGuard.push(text) : '');
       this.drainEdits(
         assistant.id,
@@ -536,6 +542,11 @@ export class ChatController {
       );
     };
     const finishStream = () => {
+      const leakTail = leak.finish();
+      if (leakTail) {
+        const t = extractor ? extractor.push(leakTail) : leakTail;
+        show(t ? activeGuard.push(t) : '');
+      }
       if (extractor) {
         const rest = extractor.finish();
         show(rest ? activeGuard.push(rest) : '');
@@ -659,6 +670,11 @@ export class ChatController {
         signal,
       )) {
         emit(delta);
+        if (leaked) {
+          this.deps.logger.debug('Stopping early: the model began repeating the prompt.');
+          doneReason = 'prompt-leak';
+          break;
+        }
       }
       finishStream();
       this.deps.logger.debug(`Generation finished: ${doneReason ?? 'unknown'}`);
